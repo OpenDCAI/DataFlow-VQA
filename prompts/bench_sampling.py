@@ -147,37 +147,56 @@ Please determine the type of the following question and output only one of the a
         return prompt
     
 @PROMPT_REGISTRY.register()
-class AnswerJudgeMultipleQuestionsPrompt(PromptABC):
+class QAFilterPrompt(DIYPromptABC):
     """
-    用于构建答案评判的提示词模板，支持多个子问题的判断。
+    用于过滤不合适的问答对的Prompt
     """
     def __init__(self):
-        pass
-    
-    def build_prompt(self, answer, reference_answer, question=None):
-        prompt = f"""
-        As an answer evaluation expert, please assess whether the following answer is correct.
+        self.f_str_template = """
+        [Role]
+        You are an education expert familiar with textbook question formats at high school and university levels.
+        Your task is to determine whether the provided question and answer pair is suitable to serve as a problem in an exam.
         
-        Question: {question}
+        Question: {input_question}
         
-        Reference Answer: {reference_answer}
+        Answer: {input_answer}
         
-        Current Answer: {answer}
-        
-        Please carefully analyze whether the current answer is semantically consistent with the reference answer. 
-        Focus only on comparing the answers themselves, not on how the problem is solved.
-        Don't just look at the surface text, understand the essential content of the answers.
-        If the current answer is semantically consistent with the reference answer, even if expressed differently, it should be judged as correct.
-        
-        The question may contain multiple sub-questions (e.g., ①②③ or (a)(b), etc.).
-        You should first identify the sub-questions in the question, then evaluate the correctness of each corresponding part in the current answer.
-        Your output should be a JSON array, where each element is "true" or "false" (use string instead of boolean), indicating whether the answer to each sub-question is correct.
-        If there is only one question, also return a single-element array.
-        
-        Please return your judgment result in JSON format such as:
-        {{"judgement_result": ["true", "false", "true"]}} 
-        
-        
+        [Criteria]
+        1. The question must be suitable for an exam setting, meaning it should raise a clear problem that requires a specific solution.
+            Examples, statements without questions, open-ended discussions and other context that do not pose a clear problem are not suitable.
+            Questions like "Give an example of..." that can have many valid answers are also not suitable.
+        2. Relevance: The answer must directly address the question asked.
+            If the answer seems to be addressing a different question and is wrongly paired with the given question, it is not suitable.
+        3. Completeness and Self-Containment: The question and answer should be complete and self-contained, providing all necessary information for understanding and solving it without requiring external context.
+           Questions that rely heavily on prior context or external references are not suitable.
+           Answers such as "Refer to theorem X", "Corollary of previous result", "Answered in the text above", "Omitted for brevity" are not acceptable.
+           Incomplete questions or answers that leave out critical information are also not suitable.
+           
+        [Important Notice]
+        1. You do not need to evaluate the correctness of the answer, only whether it is appropriate and complete in relation to the question.
+        2. Short answer with no explanation (calculation, proof, counterexample, ...) is acceptable as long as it directly addresses the question.
+           
+        [Output Format]
+        Return a JSON object with the following fields:
+        {
+        "reason": "Brief justification of your judgement."
+        "judgement": "true | false",
+        } 
+              
         Your judgment:
         """
+    
+    def build_prompt(self, need_fields, **kwargs):
+        # 校验缺失字段
+        missing = [f for f in need_fields if f not in kwargs]
+        if missing:
+            if self.on_missing == "raise":
+                raise KeyError(f"Missing fields for prompt: {missing}")
+            # 宽松模式：用空串补齐
+            for f in missing:
+                kwargs[f] = ""
+        prompt = self.f_str_template
+        for key, value in kwargs.items():
+            prompt = prompt.replace(f"{{{key}}}", str(value))
+
         return prompt

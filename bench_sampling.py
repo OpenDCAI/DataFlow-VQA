@@ -12,8 +12,9 @@ from dataflow.operators.reasoning import (
     ReasoningAnswerGroundTruthFilter
 )
 from dataflow.prompts.reasoning.math import MathAnswerGeneratorPrompt
-from prompts.bench_sampling import BenchSamplingPrompt, SubQuestionSplitingPrompt
+from prompts.bench_sampling import BenchSamplingPrompt, SubQuestionSplitingPrompt, QAFilterPrompt
 from dataflow.prompts.core_text import StrFormatPrompt
+from dataflow.operators.core_text import GeneralFilter
 
 class BenchSamplingPipeline():
     def __init__(self):
@@ -32,7 +33,7 @@ class BenchSamplingPipeline():
         
         self.llm_answer_serving = APILLMServing_request(
                 api_url="http://123.129.219.111:3000/v1/chat/completions",
-                model_name="gpt-4o-mini",
+                model_name="gpt-5-mini",
                 max_workers=100,
         )
         #拆小题
@@ -56,6 +57,17 @@ class BenchSamplingPipeline():
         # TODO:
         # answer + 题目过滤：题目或answer有那种根据lemma x.x的不具体描述、答案不完整这种、"Give an example"这种可以给无穷多答案的问题
         # answer 太长，看有没有必要refined变精简，提升llm as judge的性能。
+        
+        self.qa_filter = PromptTemplatedGenerator(
+            llm_serving = self.llm_serving,
+            prompt_template = QAFilterPrompt()
+        )
+        self.qa_filter_processor = PandasOperator(
+            [extract_filter_result_and_reason]
+        )
+        self.qa_filter_executor = GeneralFilter(
+            filter_rules=[lambda df: df['filter_result'] == 'true']
+        )
         
         #llm 回答
         self.answer_generator = ReasoningAnswerGenerator(
@@ -94,6 +106,19 @@ class BenchSamplingPipeline():
         # self.completeness_filter.run(
         #     storage = self.storage.step(),
         # )
+        
+        self.qa_filter.run(
+            storage = self.storage.step(),
+            input_question = "question",
+            input_answer = "answer",
+            output_key = "qa_judgement"
+        )
+        self.qa_filter_processor.run(
+            storage = self.storage.step(),
+        )
+        self.qa_filter_executor.run(
+            storage = self.storage.step(),
+        )
         
         self.answer_generator.run(
             storage = self.storage.step(),
@@ -174,6 +199,28 @@ def extract_type_and_reason(df: pd.DataFrame) -> pd.DataFrame:
             else:
                 df.at[idx, "type"] = val.strip()
                 df.at[idx, "type_reason"] = ""
+
+    return df
+    
+def extract_filter_result_and_reason(df: pd.DataFrame) -> pd.DataFrame:
+    df["filter_result"] = None
+    df["filter_reason"] = None
+
+    for idx, row in df.iterrows():
+        val = row.get("qa_judgement", "")
+        if pd.isna(val) or not str(val).strip():
+            continue
+        try:
+            # 尝试解析 JSON
+            j = json.loads(val)
+            judgement = j.get("judgement", "")
+            if isinstance(judgement, bool):
+                judgement = "true" if judgement else "false"
+            df.at[idx, "filter_result"] = judgement.lower()
+            df.at[idx, "filter_reason"] = j.get("reason", None)
+        except json.JSONDecodeError:
+            df.at[idx, "filter_result"] = ""
+            df.at[idx, "filter_reason"] = ""
 
     return df
 
