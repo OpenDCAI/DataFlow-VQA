@@ -3,7 +3,7 @@ import sys
 import json
 import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from dataflow.operators.core_text import PandasOperator, PromptTemplatedGenerator, BenchDatasetEvaluator
+from dataflow.operators.core_text import PandasOperator, PromptTemplatedGenerator, BenchDatasetEvaluator, BenchDatasetEvaluatorQuestion
 
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
@@ -29,14 +29,20 @@ class BenchSamplingPipeline():
                 model_name="gpt-5-mini",
                 max_workers=100,
         )
+        
+        self.llm_answer_serving = APILLMServing_request(
+                api_url="http://123.129.219.111:3000/v1/chat/completions",
+                model_name="gpt-4o-mini",
+                max_workers=100,
+        )
         #拆小题
-        # self.sub_qa_justify = PromptTemplatedGenerator(
-        #     llm_serving = self.llm_serving,
-        #     prompt_template = SubQuestionSplitingPrompt()
-        # )
-        # self.sub_qa_spliter = PandasOperator(
-        #     [split_generated_content]
-        # )
+        self.sub_qa_justify = PromptTemplatedGenerator(
+            llm_serving = self.llm_serving,
+            prompt_template = SubQuestionSplitingPrompt()
+        )
+        self.sub_qa_spliter = PandasOperator(
+            [split_generated_content]
+        )
         
         # 判断题型
         self.question_type_justify = PromptTemplatedGenerator(
@@ -53,16 +59,17 @@ class BenchSamplingPipeline():
         
         #llm 回答
         self.answer_generator = ReasoningAnswerGenerator(
-            llm_serving=self.llm_serving,
+            llm_serving=self.llm_answer_serving,
             prompt_template=MathAnswerGeneratorPrompt()
         )
         
         ## llm核对
-        self.answer_groundtruth_filter = BenchDatasetEvaluator(
+        self.answer_groundtruth_filter = BenchDatasetEvaluatorQuestion(
             compare_method="semantic",
             llm_serving=self.llm_serving,
             prompt_template=None, # using default prompt
-            eval_result_path="../eval_result_real_analysis_4.json",
+            eval_result_path="../eval_result_real_analysis_1.json",
+            support_subquestions=True
         )
         
     def forward(self):
@@ -77,30 +84,31 @@ class BenchSamplingPipeline():
         #     storage = self.storage.step(),
         # )
         
-        self.question_type_justify.run(
-            storage = self.storage.step(),
-            input_question = "question",
-            input_answer = "answer",
-            output_key = "question_type"
-        )
-        
-        self.completeness_filter.run(
-            storage = self.storage.step(),
-        )
-        
-        # self.answer_generator.run(
+        # self.question_type_justify.run(
         #     storage = self.storage.step(),
-        #     input_key = "question", 
-        #     output_key = "llm_answer"
+        #     input_question = "question",
+        #     input_answer = "answer",
+        #     output_key = "question_type"
         # )
+        
+        # self.completeness_filter.run(
+        #     storage = self.storage.step(),
+        # )
+        
+        self.answer_generator.run(
+            storage = self.storage.step(),
+            input_key = "question", 
+            output_key = "llm_answer"
+        )
         
         # TODO:
         # 这个judge很有问题，很不准确，得改，可以考虑sympy?
-        # self.answer_groundtruth_filter.run(
-        #     storage=self.storage.step(), 
-        #     input_test_answer_key="llm_answer",
-        #     input_gt_answer_key="answer"
-        #   )
+        self.answer_groundtruth_filter.run(
+            storage=self.storage.step(), 
+            input_test_answer_key="llm_answer",
+            input_gt_answer_key="answer",
+            input_question_key="question",
+          )
 
 
 def split_generated_content(df: pd.DataFrame) -> pd.DataFrame:

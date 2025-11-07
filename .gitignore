@@ -1,3 +1,4 @@
 cache*
 sampled_jsonl
 math
+__pycache__/
