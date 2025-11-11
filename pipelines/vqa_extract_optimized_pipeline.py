@@ -23,8 +23,6 @@ def id_to_text(input_ids, input_json, image_prefix="images"):
         except:
             continue
         if int(id) < len(input_json):
-            if(int(id) >= 220):
-                id = str(int(id) - 1)
             try:
                 item = input_json[int(id)]
             except:
