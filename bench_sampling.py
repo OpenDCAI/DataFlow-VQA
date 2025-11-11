@@ -3,7 +3,8 @@ import sys
 import json
 import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from dataflow.operators.core_text import PandasOperator, PromptTemplatedGenerator, BenchDatasetEvaluator, BenchDatasetEvaluatorQuestion
+from dataflow.operators.core_text import PandasOperator, PromptTemplatedGenerator
+from operators.bench_evaluate import BenchDatasetEvaluatorQuestion
 
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
@@ -19,9 +20,9 @@ from dataflow.operators.core_text import GeneralFilter
 class BenchSamplingPipeline():
     def __init__(self):
         self.storage = FileStorage(
-            first_entry_file_name="/data1/hzh/vqa/sampled_jsonl/real_analysis_4/qas.jsonl", ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
-            cache_path="./cache2",
-            file_name_prefix="real_analysis_4",
+            first_entry_file_name="./examples/VQA/vqa_filtered_qa_pairs.jsonl", ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
+            cache_path="./cache",
+            file_name_prefix="math_test",
             cache_type="json",
         )
 
@@ -80,7 +81,7 @@ class BenchSamplingPipeline():
             compare_method="semantic",
             llm_serving=self.llm_serving,
             prompt_template=None, # using default prompt
-            eval_result_path="../eval_result_real_analysis_1.json",
+            eval_result_path="../eval_result_math_test.json",
             support_subquestions=True
         )
         
