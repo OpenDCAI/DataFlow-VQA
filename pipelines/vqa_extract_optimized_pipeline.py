@@ -7,11 +7,7 @@ if parent_dir not in sys.path:
 
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
-from operators.qa_extract import QAExtractor
-from operators.vqa_task_expander import VQATaskExpander
-from operators.vqa_layout_extractor import VQALayoutExtractor
-from operators.vqa_response_converter import VQAResponseConverter
-from operators.vqa_merger import VQAMerger
+from operators.vqa_extractor import VQAExtractor
 
 class VQA_extract_optimized_pipeline:
     def __init__(self):
@@ -29,59 +25,21 @@ class VQA_extract_optimized_pipeline:
             max_workers=100,
         )
         
-        self.task_expander = VQATaskExpander()
-        self.layout_extractor = VQALayoutExtractor(mineru_backend='vlm-vllm-engine')
-        self.qa_extractor = QAExtractor(llm_serving=self.llm_serving)
-        self.response_converter = VQAResponseConverter()
-        self.merger = VQAMerger()
+        self.vqa_extractor = VQAExtractor(
+            llm_serving=self.llm_serving
+        )
         
     def forward(self):
-        # Stage 1: 扩展任务（将输入扩展为 question 和 answer 任务）
-        self.task_expander.run(
+        # 单一算子：包含预处理、QA提取、后处理的所有功能
+        self.vqa_extractor.run(
             storage=self.storage.step(),
             question_pdf_path_key="question_pdf_path",
             answer_pdf_path_key="answer_pdf_path",
             pdf_path_key="pdf_path",  # 支持 interleaved 模式
             subject_key="subject",
             output_dir_key="output_dir",
-        )
-        
-        # Stage 2: Layout 提取
-        self.layout_extractor.run(
-            storage=self.storage.step(),
-            input_pdf_path_key="pdf_path",
-            output_dir_key="output_dir",
-            output_json_path_key="json_path",
-            mode_key="mode",
-        )
-        
-        # Stage 3: QA 提取
-        self.qa_extractor.run(
-            storage=self.storage.step(),
-            input_json_path_key="json_path",
-            input_subject_key="subject",
-            output_key="extracted_qa",
-        )
-        
-        # Stage 4: Response 转换
-        self.response_converter.run(
-            storage=self.storage.step(),
-            input_response_key="extracted_qa",
-            input_json_path_key="json_path",
-            output_dir_key="output_dir",
-            mode_key="mode",
-            output_qa_list_key="qa_list",
-        )
-        
-        # Stage 5: 合并和过滤
-        self.merger.run(
-            storage=self.storage.step(),
-            input_qa_list_key="qa_list",
-            output_dir_key="output_dir",
-            mode_key="mode",
-            interleaved_key="interleaved",
-            output_root_key="output_root",
             output_jsonl_key="output_jsonl_path",
+            mineru_backend='vlm-vllm-engine',
         )
 
 
