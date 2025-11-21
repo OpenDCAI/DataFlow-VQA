@@ -5,6 +5,7 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from dataflow.operators.core_text import PandasOperator, PromptTemplatedGenerator
 from operators.bench_evaluate import BenchDatasetEvaluatorQuestion
+from operators.answer_extractor import AnswerExtractionOperator
 
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
@@ -18,12 +19,12 @@ from dataflow.prompts.core_text import StrFormatPrompt
 from dataflow.operators.core_text import GeneralFilter
 
 class BenchSamplingPipeline():
-    def __init__(self):
+    def __init__(self, first_entry_file_name, cache_path, file_name_prefix, cache_type="json"):
         self.storage = FileStorage(
-            first_entry_file_name="./examples/VQA/vqa_filtered_qa_pairs.jsonl", ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
-            cache_path="./cache",
-            file_name_prefix="math_test",
-            cache_type="json",
+            first_entry_file_name=first_entry_file_name, ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
+            cache_path=cache_path,
+            file_name_prefix=file_name_prefix,
+            cache_type=cache_type,
         )
 
         self.llm_serving = APILLMServing_request(
@@ -38,21 +39,30 @@ class BenchSamplingPipeline():
                 max_workers=100,
         )
         #拆小题
-        self.sub_qa_justify = PromptTemplatedGenerator(
-            llm_serving = self.llm_serving,
-            prompt_template = SubQuestionSplitingPrompt()
-        )
-        self.sub_qa_spliter = PandasOperator(
-            [split_generated_content]
+        # self.sub_qa_justify = PromptTemplatedGenerator(
+        #     llm_serving = self.llm_serving,
+        #     prompt_template = SubQuestionSplitingPrompt()
+        # )
+        # self.sub_qa_spliter = PandasOperator(
+        #     [split_generated_content]
+        # )
+        
+        # 抽取答案
+        self.answer_extractor = AnswerExtractionOperator(
+            llm_serving=self.llm_serving,
+            overwrite=False
         )
         
         # 判断题型
-        self.question_type_justify = PromptTemplatedGenerator(
+        self.type_filter = PromptTemplatedGenerator(
             llm_serving = self.llm_serving,
             prompt_template = BenchSamplingPrompt()
         )
-        self.completeness_filter = PandasOperator(
+        self.type_filter_processor = PandasOperator(
             [extract_type_and_reason]
+        )
+        self.type_filter_executor = GeneralFilter(
+            filter_rules=[lambda df: df['type'].isin(["Calculation", "Fill-in", "Multiple-Choice"])]
         )
         
         # TODO:
@@ -97,16 +107,25 @@ class BenchSamplingPipeline():
         #     storage = self.storage.step(),
         # )
         
-        # self.question_type_justify.run(
-        #     storage = self.storage.step(),
-        #     input_question = "question",
-        #     input_answer = "answer",
-        #     output_key = "question_type"
-        # )
         
-        # self.completeness_filter.run(
-        #     storage = self.storage.step(),
-        # )
+        self.type_filter.run(
+            storage = self.storage.step(),
+            input_question = "question",
+            input_answer = "answer",
+            output_key = "question_type"
+        )       
+        self.type_filter_processor.run(
+            storage = self.storage.step(),
+        )        
+        self.type_filter_executor.run(
+            storage = self.storage.step(),
+        )
+        
+        self.answer_extractor.run(
+            storage = self.storage.step(),
+            input_key = "solution",
+            output_key= "answer"
+        )
         
         self.qa_filter.run(
             storage = self.storage.step(),
@@ -120,21 +139,21 @@ class BenchSamplingPipeline():
         self.qa_filter_executor.run(
             storage = self.storage.step(),
         )
+                
+        # self.answer_generator.run(
+        #     storage = self.storage.step(),
+        #     input_key = "question", 
+        #     output_key = "llm_answer"
+        # )
         
-        self.answer_generator.run(
-            storage = self.storage.step(),
-            input_key = "question", 
-            output_key = "llm_answer"
-        )
-        
-        # TODO:
-        # 这个judge很有问题，很不准确，得改，可以考虑sympy?
-        self.answer_groundtruth_filter.run(
-            storage=self.storage.step(), 
-            input_test_answer_key="llm_answer",
-            input_gt_answer_key="answer",
-            input_question_key="question",
-          )
+        # # TODO:
+        # # 这个judge很有问题，很不准确，得改，可以考虑sympy?
+        # self.answer_groundtruth_filter.run(
+        #     storage=self.storage.step(), 
+        #     input_test_answer_key="llm_answer",
+        #     input_gt_answer_key="answer",
+        #     input_question_key="question",
+        #   )
 
 
 def split_generated_content(df: pd.DataFrame) -> pd.DataFrame:
@@ -226,5 +245,11 @@ def extract_filter_result_and_reason(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 if __name__ == "__main__":
-    model = BenchSamplingPipeline()
-    model.forward()
+    for i in range(1, 6):
+    
+        first_entry_file_name=f"/data1/djw/VQA_ready_data/real_analysis_{i}/vqa_filtered_qa_pairs.jsonl"
+        cache_path = f"./cache/real_analysis_{i}"
+        file_name_prefix = f"real_analysis_{i}"
+        
+        model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
+        model.forward()
