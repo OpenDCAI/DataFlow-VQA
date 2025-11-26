@@ -87,7 +87,7 @@ def make_remove_think_fn():
 
 
 class BenchSamplingPipeline():
-    def __init__(self, first_entry_file_name, cache_path, file_name_prefix, cache_type="json"):
+    def __init__(self, first_entry_file_name, cache_path, file_name_prefix, eval_result_path, cache_type="json"):
         self.storage = FileStorage(
             first_entry_file_name=first_entry_file_name, ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
             cache_path=cache_path,
@@ -130,7 +130,7 @@ class BenchSamplingPipeline():
             compare_method="semantic",
             llm_serving=self.llm_serving,
             prompt_template=None, # using default prompt
-            eval_result_path="./rollout_cache/math-test/eval_result_math_test.json",
+            eval_result_path=eval_result_path,
             support_subquestions=True
         )
         
@@ -169,7 +169,8 @@ if __name__ == "__main__":
     first_entry_file_name=f"/data1/VQA_ready_data/all_vqa.jsonl"
     cache_path = f"./rollout_cache/all_math"
     file_name_prefix = f"math-Qwen3-8B-Thinking"
+    eval_result_path = f"./rollout_cache/all_math/eval_results.jsonl"
     input_image_default_basedir = f"./"
     
-    model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
+    model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path)
     model.forward(input_image_default_basedir)

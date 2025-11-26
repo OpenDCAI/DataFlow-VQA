@@ -85,7 +85,7 @@ def make_remove_think_fn():
     return fn
 
 class BenchSamplingPipeline():
-    def __init__(self, first_entry_file_name, cache_path, file_name_prefix, cache_type="json"):
+    def __init__(self, first_entry_file_name, cache_path, file_name_prefix, eval_result_path, cache_type="json"):
         self.storage = FileStorage(
             first_entry_file_name=first_entry_file_name, ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
             cache_path=cache_path,
@@ -124,7 +124,7 @@ class BenchSamplingPipeline():
             compare_method="semantic",
             llm_serving=self.llm_serving,
             prompt_template=None, # using default prompt
-            eval_result_path="./eval_cache/all_math/eval_result_gpt-5-mini.json",
+            eval_result_path=eval_result_path,
             support_subquestions=True
         )
         
@@ -163,6 +163,7 @@ if __name__ == "__main__":
     cache_path = f"./eval_cache/all_math/gpt-5-mini/"
     file_name_prefix = f"math-gpt-5-mini"
     input_image_default_basedir = f"./"
+    eval_result_path = f"./eval_cache/all_math/eval_result_gpt-5-mini.json"
     
-    model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
+    model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path)
     model.forward(input_image_default_basedir)
