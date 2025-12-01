@@ -11,24 +11,33 @@ class SubQuestionSplitingPrompt(DIYPromptABC):
         You are an educational question structure analysis assistant. Below is a composite question and its corresponding answer. Please split it into several independent sub-questions.
 The requirements are as follows:
 
-1. The question may contain multiple sub-questions (e.g., ①②③ or (a)(b), etc.); please accurately identify and split them one by one.
+1. The question may contain multiple sub-questions (e.g., ①②③ or (a)(b), etc.); please accurately identify and split them one by one. Only split sub-questions with clear labels.
+    Do not split implicit sub-questions (such as "What is the value of x and y?" or multiple question marks).
 2. Each sub-question must be self-contained and answerable. If the original question contains contextual information, include it in each sub-question to preserve full meaning.
-3. If an answer is provided, try to match each sub-question with its corresponding part of the answer based on semantics.
-4. If the original answer contains LaTeX formulas, preserve them exactly as they appear.
-5. If the original answer is missing or cannot be clearly aligned, leave `"sub_answer"` as an empty string.
+    If sub-questions are related (e.g., "① Find x. ② Using the value of x, find y."), do not split them; keep them as one sub-question.
+3. If an answer or/and solution is provided, try to match each sub-question with its corresponding part of the answer or/and solution based on semantics.
+4. If the original answer or/and solution contains LaTeX formulas, preserve them exactly as they appear.
+5. If the original answer or/and solution is missing or cannot be clearly aligned, leave `"sub_answer"` or/and `"sub_solution"` as an empty string.
 6. The output must be a valid JSON array, where each element contains:
 
    * `"sub_id"`: the index of the sub-question (an integer starting from 1)
    * `"sub_question"`: the complete text of the sub-question
    * `"sub_answer"`: the corresponding answer (empty string if unavailable)
+   * `"sub_solution"`: the corresponding solution (empty string if unavailable)
+   
+[Important Notice]
+In some questions, answers or solutions, there will be figures written as `![image](image_url)`. When splitting, please keep these figure references in the corresponding sub-questions, sub-answers, or sub-solutions as EXACTLY what they are.
 
 ## Example Input:
 
 **Question:**  
-A class has 40 students, including 25 boys and 15 girls. ① Find the percentage of boys in the class. ② Find the percentage of girls in the class.
+A class has 40 students, including 25 boys and 15 girls. ![image](question_images/a284h5iuh38.jpg) ① Find the percentage of boys in the class. ② Find the percentage of girls in the class.
 
 **Answer:**  
-① Boys: $25/40 = 62.5\%$. ② Girls: $15/40 = 37.5\%$.
+① 62.5%. ② 37.5%.
+
+**Solution:**  
+Percentage of boys = (25/40) * 100 = 62.5%, percentage of girls = (15/40) * 100 = 37.5%.
 ----------------------------------------------
 
 ## Example Output:
@@ -37,13 +46,15 @@ A class has 40 students, including 25 boys and 15 girls. ① Find the percentage
 [
   {
     "sub_id": 1,
-    "sub_question": "A class has 40 students, including 25 boys and 15 girls. Find the percentage of boys in the class.",
-    "sub_answer": "Boys: $25/40 = 62.5\\%$."
+    "sub_question": "A class has 40 students, including 25 boys and 15 girls. ![image](question_images/a284h5iuh38.jpg) Find the percentage of boys in the class.",
+    "sub_answer": "62.5%.",
+    "sub_solution": "Percentage of boys = (25/40) * 100 = 62.5%."
   },
   {
     "sub_id": 2,
-    "sub_question": "A class has 40 students, including 25 boys and 15 girls. Find the percentage of girls in the class.",
-    "sub_answer": "Girls: $15/40 = 37.5\\%$."
+    "sub_question": "A class has 40 students, including 25 boys and 15 girls. ![image](question_images/a284h5iuh38.jpg) Find the percentage of girls in the class.",
+    "sub_answer": "37.5%.",
+    "sub_solution": "Percentage of girls = (15/40) * 100 = 37.5%."
   }
 ]
 ```
@@ -53,6 +64,9 @@ A class has 40 students, including 25 boys and 15 girls. ① Find the percentage
       
       [Answer]
       {input_answer}
+      
+      [Solution]
+      {input_solution}
       """
     
     def build_prompt(self, need_fields, **kwargs):

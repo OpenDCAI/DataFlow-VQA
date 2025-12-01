@@ -79,7 +79,7 @@ def make_remove_think_fn():
                 s = "<think>" + str(t)
                 return pattern.sub("", s).strip()
 
-            df["llm_answer"] = df["llm_answer"].apply(clean_text)
+            df["llm_short_answer"] = df["llm_answer"].apply(clean_text)
 
         return df
 
@@ -120,7 +120,7 @@ class BenchSamplingPipeline():
         self.answer_generator = VQAReasoningAnswerGenerator(
             llm_serving=self.llm_answer_serving,
             prompt_template=MathAnswerGeneratorPrompt(),
-            skip_text_only=True,
+            skip_text_only=False,
         )
         
         self.think_cleaner = PandasOperator(process_fn=[ make_remove_think_fn() ])
@@ -156,7 +156,7 @@ class BenchSamplingPipeline():
             # 这个judge很有问题，很不准确，得改，可以考虑sympy?
             self.answer_groundtruth_filter.run(
                 storage=self.storage.step(), 
-                input_test_answer_key="llm_answer",
+                input_test_answer_key="llm_short_answer",
                 input_gt_answer_key="answer",
                 input_question_key="question",
             )
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     
     first_entry_file_name=f"/data1/VQA_ready_data/all_vqa.jsonl"
     cache_path = f"./rollout_cache/all_math"
-    file_name_prefix = f"math-Qwen3-8B-Thinking"
+    file_name_prefix = f"math-Qwen3-8B-Instruct"
     eval_result_path = f"./rollout_cache/all_math/eval_results.jsonl"
     input_image_default_basedir = f"./"
     

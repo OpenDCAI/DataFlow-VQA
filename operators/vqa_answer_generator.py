@@ -64,15 +64,15 @@ class VQAReasoningAnswerGenerator(OperatorABC):
 
     def _validate_dataframe(self, dataframe: pd.DataFrame):
         required_keys = [self.input_key]
-        forbidden_keys = [self.output_key]
+        # forbidden_keys = [self.output_key]
 
         missing = [k for k in required_keys if k not in dataframe.columns]
-        conflict = [k for k in forbidden_keys if k in dataframe.columns]
+        # conflict = [k for k in forbidden_keys if k in dataframe.columns]
 
         if missing:
             raise ValueError(f"Missing required column(s): {missing}")
-        if conflict:
-            raise ValueError(f"The following column(s) already exist and would be overwritten: {conflict}")
+        # if conflict:
+            # raise ValueError(f"The following column(s) already exist and would be overwritten: {conflict}")
 
     def _prepare_vlm_inputs(self, dataframe) -> Tuple[List[str], List[List[str]], List[List[str]], List[int]]:
         """

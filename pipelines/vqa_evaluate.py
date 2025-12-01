@@ -21,50 +21,6 @@ from dataflow.operators.core_text import GeneralFilter
 from typing import Iterable
 import re
 
-def make_rollout_dup_fn(num: int):
-    def fn(df):
-        base = df.copy().reset_index(drop=True)
-
-        parts = []
-        for i in range(num):
-            part = base.copy()
-            part["rollout_index"] = i
-            
-            parts.append(part)
-
-        out = pd.concat(parts, ignore_index=True)
-        return out
-
-    return fn
-
-
-def make_rollout_aggregate_fn():
-    def fn(df):
-        # 规范化 answer_match_result → bool
-        s = df["answer_match_result"]
-        if s.dtype != bool:
-            s = s.astype(str).str.lower().isin(["true", "1", "yes", "y", "t"])
-        df = df.copy()
-        df["_match"] = s
-
-        group = df.groupby("question", sort=False)
-
-        agg = group["_match"].agg(
-            rollout_num="size",
-            accuracy="mean"
-        )
-
-        # 每题的第一条记录保留其他字段
-        firsts = group.first()
-        if "_match" in firsts.columns:
-            firsts = firsts.drop(columns=["_match"])
-
-        result = firsts.join(agg).reset_index()
-
-        return result
-
-    return fn
-
 def make_remove_think_fn():
     pattern = re.compile(r'<think>.*?</think>', flags=re.DOTALL | re.IGNORECASE)
     def fn(df):
@@ -78,7 +34,7 @@ def make_remove_think_fn():
                 s = "<think>" + str(t)
                 return pattern.sub("", s).strip()
 
-            df["llm_answer"] = df["llm_answer"].apply(clean_text)
+            df["llm_short_answer"] = df["llm_answer"].apply(clean_text)
 
         return df
     
@@ -106,9 +62,10 @@ class BenchSamplingPipeline():
                 max_workers=100,
         )
         
-        #eval就是rollout一次
-        self.dup_operator = PandasOperator(process_fn=[ make_rollout_dup_fn(1) ])
-        self.agg_operator = PandasOperator(process_fn=[ make_rollout_aggregate_fn() ])
+        # 难度过滤
+        self.difficulty_filter = GeneralFilter(
+            filter_rules=[lambda df: df['accuracy'] <= 0.6]
+        )
         
         #llm 回答
         self.answer_generator = VQAReasoningAnswerGenerator(
@@ -130,11 +87,9 @@ class BenchSamplingPipeline():
         
     def forward(self, input_image_default_basedir):
                 
-        self.dup_operator.run(
-            storage = self.storage.step(),
-        )
+        self.difficulty_filter.run(storage = self.storage.step())
         
-         # llm回答
+        # llm回答
         self.answer_generator.run(
             storage = self.storage.step(),
             input_key = "question", 
@@ -150,20 +105,19 @@ class BenchSamplingPipeline():
             # 这个judge很有问题，很不准确，得改，可以考虑sympy?
             self.answer_groundtruth_filter.run(
                 storage=self.storage.step(), 
-                input_test_answer_key="llm_answer",
+                input_test_answer_key="llm_short_answer",
                 input_gt_answer_key="answer",
                 input_question_key="question",
             )
-            self.agg_operator.run(storage=self.storage.step())
         except:
             pass
 
 if __name__ == "__main__":
-    first_entry_file_name=f"/data1/VQA_ready_data/all_vqa.jsonl"
-    cache_path = f"./eval_cache/all_math/gpt-5-mini/"
+    first_entry_file_name=f"/data1/djw/DataFlow-VQA/rollout_cache/gaokao/gaokao-Qwen3-8B-Instruct_step4.json"
+    cache_path = f"./eval_cache/gaokao_hard_instruct/gpt-5-mini/"
     file_name_prefix = f"math-gpt-5-mini"
-    input_image_default_basedir = f"./"
-    eval_result_path = f"./eval_cache/all_math/eval_result_gpt-5-mini.json"
+    input_image_default_basedir = f"/data1/djw/vqa_output/math/gaokao"
+    eval_result_path = f"./eval_cache/gaokao_hard_instruct/eval_result_gpt-5-mini.json"
     
     model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path)
     model.forward(input_image_default_basedir)
