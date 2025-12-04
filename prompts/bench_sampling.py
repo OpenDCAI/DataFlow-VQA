@@ -21,12 +21,14 @@ The requirements are as follows:
 6. The output must be a valid JSON array, where each element contains:
 
    * `"sub_id"`: the index of the sub-question (an integer starting from 1)
-   * `"sub_question"`: the complete text of the sub-question
-   * `"sub_answer"`: the corresponding answer (empty string if unavailable)
-   * `"sub_solution"`: the corresponding solution (empty string if unavailable)
+   * `"sub_question"`: the complete text of the sub-question (or "ORIGINAL" if no splitting is needed)
+   * `"sub_answer"`: the corresponding answer, empty string if unavailable (or "ORIGINAL" if no splitting is needed)
+   * `"sub_solution"`: the corresponding solution, empty string if unavailable (or "ORIGINAL" if no splitting is needed)
    
 [Important Notice]
-In some questions, answers or solutions, there will be figures written as `![image](image_url)`. When splitting, please keep these figure references in the corresponding sub-questions, sub-answers, or sub-solutions as EXACTLY what they are.
+1. In some questions, answers or solutions, there will be figures written as `![image](image_url)`. When splitting, please keep these figure references in the corresponding sub-questions, sub-answers, or sub-solutions as EXACTLY what they are.
+2. If the question does not need to be split, return an array with a single element, simplified as: [{"sub_id": 1, "sub_question": "ORIGINAL", "sub_answer": "ORIGINAL", "sub_solution": "ORIGINAL"}]
+    In this case, you only need to output "ORIGINAL" instead of the full text for sub_question, sub_answer, and sub_solution, so that we can save tokens.
 
 ## Example Input:
 

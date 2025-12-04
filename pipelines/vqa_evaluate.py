@@ -64,14 +64,14 @@ class BenchSamplingPipeline():
         
         # 难度过滤
         self.difficulty_filter = GeneralFilter(
-            filter_rules=[lambda df: df['accuracy'] <= 0.6]
+            filter_rules=[lambda df: df['accuracy'] <= 1.0]
         )
         
         #llm 回答
         self.answer_generator = VQAReasoningAnswerGenerator(
             llm_serving=self.llm_answer_serving,
             prompt_template=MathAnswerGeneratorPrompt(),
-            skip_text_only=False,
+            skip_text_only=True,
         )
         
         self.think_cleaner = PandasOperator(process_fn=[ make_remove_think_fn() ])
@@ -113,11 +113,11 @@ class BenchSamplingPipeline():
             pass
 
 if __name__ == "__main__":
-    first_entry_file_name=f"/data1/djw/DataFlow-VQA/rollout_cache/gaokao/gaokao-Qwen3-8B-Instruct_step4.json"
-    cache_path = f"./eval_cache/gaokao_hard_instruct/gpt-5-mini/"
+    first_entry_file_name=f"/data1/djw/DataFlow-VQA/rollout_cache/all_math_vqa_only/math-Qwen3-8B-Instruct_step5.json"
+    cache_path = f"./eval_cache/all_math_vqa_only"
     file_name_prefix = f"math-gpt-5-mini"
-    input_image_default_basedir = f"/data1/djw/vqa_output/math/gaokao"
-    eval_result_path = f"./eval_cache/gaokao_hard_instruct/eval_result_gpt-5-mini.json"
+    eval_result_path = f"./eval_cache/all_math_vqa_only/eval_results.jsonl"
+    input_image_default_basedir = f"./"
     
     model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path)
     model.forward(input_image_default_basedir)

@@ -12,7 +12,7 @@ from operators.vqa_extractor import VQAExtractor
 class VQA_extract_optimized_pipeline:
     def __init__(self):
         self.storage = FileStorage(
-            first_entry_file_name="./examples/VQA/vqa_extract_interleaved_test.jsonl",
+            first_entry_file_name="/data1/djw/VQA_input_jsonl/number_theory.jsonl",
             cache_path="./vqa_extract_optimized_cache",
             file_name_prefix="vqa",
             cache_type="jsonl",

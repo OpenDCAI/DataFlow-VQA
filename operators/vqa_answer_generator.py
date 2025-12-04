@@ -124,6 +124,7 @@ class VQAReasoningAnswerGenerator(OperatorABC):
                     list_of_text_segments.append([])
                 continue
             
+            vqa_complete = True
             # 4. 遍历匹配项，提取交错的文本片段和图像路径
             for match in matches:
                 # 4a. 提取前导文本 (在上一张图片或文本开头到当前图片之间的文本)
@@ -143,6 +144,12 @@ class VQAReasoningAnswerGenerator(OperatorABC):
                 
                 # 4c. 记录绝对路径
                 full_path = os.path.join(base_dir, path)
+                # 检查路径是否存在
+                if not os.path.isfile(full_path):
+                    self.logger.warning(f"Image file not found: {full_path} (from question index {index})")
+                    vqa_complete = False
+                    break
+                
                 current_paths.append(full_path)
                 
                 last_end = match.end()
@@ -153,10 +160,11 @@ class VQAReasoningAnswerGenerator(OperatorABC):
                 current_user_prompt += trailing_text
                 
             # 5. 存储该请求的结果
-            list_of_image_paths.append(current_paths)
-            list_of_text_segments.append(current_segments)
-            user_prompts.append(self.prompts.build_prompt(current_user_prompt))
-            vqa_ids.append(index)
+            if vqa_complete:
+                list_of_image_paths.append(current_paths)
+                list_of_text_segments.append(current_segments)
+                user_prompts.append(self.prompts.build_prompt(current_user_prompt))
+                vqa_ids.append(index)
 
         return user_prompts, list_of_image_paths, list_of_text_segments, vqa_ids
 

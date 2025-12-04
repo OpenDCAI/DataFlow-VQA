@@ -96,7 +96,7 @@ class BenchSamplingPipeline():
         )
 
         self.llm_answer_serving = LocalVLMServing_vllm(
-            hf_model_name_or_path="/data0/models/Qwen3-VL-8B-Thinking",
+            hf_model_name_or_path="/data0/models/Qwen3-VL-8B-Instruct",
             vllm_temperature=0.5,
             vllm_tensor_parallel_size=4,
             vllm_max_tokens=8192,
@@ -120,7 +120,7 @@ class BenchSamplingPipeline():
         self.answer_generator = VQAReasoningAnswerGenerator(
             llm_serving=self.llm_answer_serving,
             prompt_template=MathAnswerGeneratorPrompt(),
-            skip_text_only=False,
+            skip_text_only=True,
         )
         
         self.think_cleaner = PandasOperator(process_fn=[ make_remove_think_fn() ])
@@ -167,7 +167,7 @@ class BenchSamplingPipeline():
 if __name__ == "__main__":
     
     first_entry_file_name=f"/data1/VQA_ready_data/all_vqa.jsonl"
-    cache_path = f"./rollout_cache/all_math"
+    cache_path = f"./rollout_cache/all_math_vqa_only"
     file_name_prefix = f"math-Qwen3-8B-Instruct"
     eval_result_path = f"./rollout_cache/all_math/eval_results.jsonl"
     input_image_default_basedir = f"./"

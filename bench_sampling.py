@@ -20,6 +20,7 @@ from prompts.bench_sampling import BenchSamplingPrompt, SubQuestionSplitingPromp
 from prompts.question_refine import AddMissingBlankPrompt
 from dataflow.prompts.core_text import StrFormatPrompt
 from dataflow.operators.core_text import GeneralFilter
+import argparse
 
 class BenchSamplingPipeline():
     def __init__(self, first_entry_file_name, cache_path, file_name_prefix, cache_type="json"):
@@ -32,7 +33,7 @@ class BenchSamplingPipeline():
 
         self.llm_serving = APILLMServing_request(
                 api_url="http://123.129.219.111:3000/v1/chat/completions",
-                model_name="gpt-5-mini",
+                model_name="gpt-5-mini-2025-08-07",
                 max_workers=100,
         )
         
@@ -205,9 +206,9 @@ def split_generated_content(df: pd.DataFrame) -> pd.DataFrame:
 
             new_row = row.to_dict()
             # new_row["sub_id"] = item.get("sub_id", None)
-            new_row["question"] = sub_question
-            new_row["answer"] = sub_answer
-            new_row["solution"] = sub_solution
+            new_row["question"] = sub_question if sub_question != "ORIGINAL" else row["question"]
+            new_row["answer"] = sub_answer if sub_answer != "ORIGINAL" else row["answer"]
+            new_row["solution"] = sub_solution if sub_solution != "ORIGINAL" else row.get("solution", "")
             rows.append(new_row)
 
     if not rows:
@@ -263,9 +264,17 @@ def extract_filter_result_and_reason(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 if __name__ == "__main__":
-    name = "numerical_analysis"
+    parser = argparse.ArgumentParser(description="Run BenchSamplingPipeline")
+    parser.add_argument("name", nargs="?", default="pde", help="dataset name (default: pde)")
+    parser.add_argument("end", nargs="?", type=int, default=3, help="range end for i (uses range(1, end + 1), default: 3)")
+    args = parser.parse_args()
     
-    for i in range(1, 4):
+    # Example usage:
+    # python bench_sampling.py pde 3
+
+    name = args.name
+
+    for i in range(1, args.end + 1):
     
         first_entry_file_name=f"/data1/VQA_ready_data/{name}_{i}/vqa_filtered_qa_pairs.jsonl"
         cache_path = f"/data1/VQA_ready_data/{name}_{i}"
