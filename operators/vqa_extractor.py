@@ -130,6 +130,13 @@ class VQAExtractor(OperatorABC):
         raw_file = Path(input_pdf_file_path)
         pdf_name = raw_file.stem
         intermediate_dir = output_folder
+        output_json_file = os.path.join(intermediate_dir, pdf_name, MinerU_Version[mineru_backend], f"{pdf_name}_content_list.json")
+        output_layout_file = os.path.join(intermediate_dir, pdf_name, MinerU_Version[mineru_backend], f"{pdf_name}_layout.pdf")
+        # 如果已经存在则可以直接返回
+        if os.path.exists(output_json_file) and os.path.exists(output_layout_file):
+            self.logger.info(f"Layout files already exist for {input_pdf_file_path}, skipping extraction.")
+            return output_json_file, output_layout_file
+        
         args = [
             "-p", str(raw_file),
             "-o", str(intermediate_dir),
@@ -145,9 +152,7 @@ class VQAExtractor(OperatorABC):
         except SystemExit as e:
             if e.code != 0:
                 raise RuntimeError(f"MinerU execution failed with exit code: {e.code}")
-        
-        output_json_file = os.path.join(intermediate_dir, pdf_name, MinerU_Version[mineru_backend], f"{pdf_name}_content_list.json")
-        output_layout_file = os.path.join(intermediate_dir, pdf_name, MinerU_Version[mineru_backend], f"{pdf_name}_layout.pdf")
+               
         return output_json_file, output_layout_file
     
     def _convert_response(self, input_response, input_json_path, image_prefix="images"):
@@ -318,24 +323,24 @@ class VQAExtractor(OperatorABC):
             
             if current_system_prompt is None:
                 current_system_prompt = system_prompt
-                current_batch = [user_input]
+                current_batch = [system_prompt + '\n' + user_input]
                 current_batch_indices = [idx]
             elif system_prompt == current_system_prompt:
-                current_batch.append(user_input)
+                current_batch.append(system_prompt + '\n' + user_input)
                 current_batch_indices.append(idx)
             else:
                 # 处理当前批次
-                batch_responses = self.llm_serving.generate_from_input(user_inputs=current_batch, system_prompt=current_system_prompt)
+                batch_responses = self.llm_serving.generate_from_input(user_inputs=current_batch, system_prompt="")
                 for batch_idx, resp in zip(current_batch_indices, batch_responses):
                     responses[batch_idx] = resp
                 # 开始新批次
                 current_system_prompt = system_prompt
-                current_batch = [user_input]
+                current_batch = [system_prompt + '\n' + user_input]
                 current_batch_indices = [idx]
         
         # 处理最后一批
         if current_batch:
-            batch_responses = self.llm_serving.generate_from_input(user_inputs=current_batch, system_prompt=current_system_prompt)
+            batch_responses = self.llm_serving.generate_from_input(user_inputs=current_batch, system_prompt="")
             for batch_idx, resp in zip(current_batch_indices, batch_responses):
                 responses[batch_idx] = resp
         
@@ -358,6 +363,10 @@ class VQAExtractor(OperatorABC):
             
             image_prefix = f"{mode}_images"
             converted_json_path = json_path.replace('.json', '_converted.json')
+            # 保存response
+            response_path = os.path.join(output_root, f"vqa_extraction_response_{mode}.txt")
+            with open(response_path, 'w', encoding='utf-8') as resp_file:
+                resp_file.write(response)
             qa_list = self._convert_response(response, converted_json_path, image_prefix)
             
             # 复制图片
@@ -406,14 +415,14 @@ class VQAExtractor(OperatorABC):
             
             # 写入 question jsonl
             q_jsonl_path = os.path.join(output_root, "vqa_extracted_questions.jsonl")
-            if q_qa_list:
+            if q_qa_list != None:
                 with open(q_jsonl_path, 'w', encoding='utf-8') as f:
                     for item in q_qa_list:
                         f.write(json.dumps(item, ensure_ascii=False) + '\n')
             
             # 写入 answer jsonl（如果不是 interleaved）
             a_jsonl_path = None
-            if not interleaved and a_qa_list:
+            if not interleaved and a_qa_list != None:
                 a_jsonl_path = os.path.join(output_root, "vqa_extracted_answers.jsonl")
                 with open(a_jsonl_path, 'w', encoding='utf-8') as f:
                     for item in a_qa_list:
@@ -429,6 +438,10 @@ class VQAExtractor(OperatorABC):
             # 过滤
             filtered_items = []
             total_count = 0
+            # 检查merged_jsonl是否存在
+            if not os.path.exists(merged_jsonl):
+                self.logger.warning(f"Merged JSONL file does not exist: {merged_jsonl}")
+                continue
             with open(merged_jsonl, 'r', encoding='utf-8') as f:
                 for line in f:
                     total_count += 1
