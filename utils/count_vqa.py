@@ -157,23 +157,29 @@ def display_results(results, total_results):
 
 # --- 📌 使用示例 ---
 if __name__ == '__main__':
-    # **请根据您的实际情况修改以下两个变量**
-    # 您的根文件夹路径，即包含 math_1, math_2, physics_1... 的目录
+    # **请根据需要修改以下两个变量**
     ROOT_DIRECTORY = '/data0/djw/VQA_ready_data'
-    # 您要统计的学科前缀 (例如 'math')
-    SUBJECT = 'thermodynamics_and_statistical_physics'
+    SUBJECTS = [
+        'thermodynamics_and_statistical_physics',
+        # 'math',
+        # 'physics',
+        # 添加更多学科前缀...
+    ]
 
     # 检查根目录是否存在
     if not os.path.isdir(ROOT_DIRECTORY):
         print(f"ERROR: Root directory not found at '{ROOT_DIRECTORY}'. Please update the ROOT_DIRECTORY variable.")
     else:
-        print(f"Starting analysis for subject '{SUBJECT}' in directory '{ROOT_DIRECTORY}'...")
-        individual_results, aggregated_totals = process_subject_folder(
-            root_dir=ROOT_DIRECTORY,
-            subject_prefix=SUBJECT
-        )
+        # 对 SUBJECTS 列表中的每个学科依次统计
+        for SUBJECT in SUBJECTS:
+            print("\n" + "=" * 60)
+            print(f"Starting analysis for subject '{SUBJECT}' in directory '{ROOT_DIRECTORY}'...")
+            individual_results, aggregated_totals = process_subject_folder(
+                root_dir=ROOT_DIRECTORY,
+                subject_prefix=SUBJECT
+            )
 
-        if individual_results:
-            display_results(individual_results, aggregated_totals)
-        else:
-            print(f"No folders starting with '{SUBJECT}' found in the root directory.")
+            if individual_results:
+                display_results(individual_results, aggregated_totals)
+            else:
+                print(f"No folders starting with '{SUBJECT}' found in the root directory.")
