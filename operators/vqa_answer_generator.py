@@ -64,26 +64,14 @@ class VQAReasoningAnswerGenerator(OperatorABC):
 
     def _validate_dataframe(self, dataframe: pd.DataFrame):
         required_keys = [self.input_key]
-        # forbidden_keys = [self.output_key]
-
         missing = [k for k in required_keys if k not in dataframe.columns]
-        # conflict = [k for k in forbidden_keys if k in dataframe.columns]
-
         if missing:
             raise ValueError(f"Missing required column(s): {missing}")
-        # if conflict:
-            # raise ValueError(f"The following column(s) already exist and would be overwritten: {conflict}")
 
     def _prepare_vlm_inputs(self, dataframe) -> Tuple[List[str], List[List[str]], List[List[str]], List[int]]:
         """
         Parses prompts for image markdown, extracts paths and text segments, 
         and structures them into interleaved lists for the VLM server.
-        
-        返回:
-            user_prompts: List[str] (所有的问题)
-            list_of_image_paths: List[List[str]] (所有请求的绝对路径列表)
-            list_of_text_segments: List[List[str]] (所有图像标签)
-            vqa_ids: List[int] (含有图片的问题编号)
         """
         list_of_image_paths: List[List[str]] = []
         list_of_text_segments: List[List[str]] = []
@@ -117,7 +105,6 @@ class VQAReasoningAnswerGenerator(OperatorABC):
             # 3. 处理纯文本或交错文本/图像
             if (not matches):
                 if (not self.skip_text_only):
-                    # 纯文本提示：直接构建提示并作为唯一的文本片段
                     final_prompt_text = self.prompts.build_prompt(question)
                     user_prompts.append(final_prompt_text)
                     list_of_image_paths.append([])
@@ -127,23 +114,76 @@ class VQAReasoningAnswerGenerator(OperatorABC):
             vqa_complete = True
             # 4. 遍历匹配项，提取交错的文本片段和图像路径
             for match in matches:
-                # 4a. 提取前导文本 (在上一张图片或文本开头到当前图片之间的文本)
                 leading_text = question[last_end:match.start()].strip()
                 if leading_text:
-                    # **注意**: 这里假设 self.prompts.build_prompt 只对整个 User Instruction 有效，
-                    # 因此我们将这些中间的文本片段作为纯文本对待。
                     current_user_prompt += leading_text
                 
-                # 4b. 提取图片路径和标签
-                # 标签会被作为文本片段传入，放在图片之前或之后，以便 VLM 识别。
                 label = match.group(1).strip()
                 path = match.group(2).strip()
                 
-                # 将标签作为文本片段传入，VLM server会将其放在图片占位符附近
                 current_segments.append(label)
                 
-                # 4c. 记录绝对路径
+                # 4c. 记录绝对路径 (原始逻辑)
                 full_path = os.path.join(base_dir, path)
+                
+                # =========================================================================
+                # [修改开始] 投机取巧的路径修复逻辑 (Heuristic Path Rescue)
+                # =========================================================================
+                if not os.path.isfile(full_path):
+                    # 1. 定义你要求的强制正确根目录 (Hardcoded Correct Root)
+                    # 注意：根据你的要求，这里使用了 /jizhicfs/...
+                    FORCE_ROOT = "/jizhicfs/herunming/vqa_wzh/images"
+                    
+                    # 2. 尝试解析路径结构
+                    # 你的错误路径包含: .../subset_name/question_images/filename.jpg
+                    # 我们尝试提取最后三级：subset_name, question_images, filename
+                    
+                    try:
+                        # 获取文件名 (e.g., xxx.jpg)
+                        filename = os.path.basename(full_path)
+                        
+                        # 获取父目录 (期望是 question_images)
+                        parent_dir_path = os.path.dirname(full_path)
+                        parent_dir_name = os.path.basename(parent_dir_path)
+                        
+                        # 获取祖父目录 (期望是 probability_theory_4 这种子集名)
+                        grandparent_dir_path = os.path.dirname(parent_dir_path)
+                        grandparent_dir_name = os.path.basename(grandparent_dir_path)
+
+                        # 简单的启发式判断：如果路径里包含 question_images，我们就尝试重组
+                        if "question_images" in full_path:
+                            # 如果当前解析出来的父目录不是 question_images，说明可能路径错位了
+                            # 我们尝试在整个字符串里找 question_images 的位置
+                            if parent_dir_name != "question_images":
+                                # 备用方案：直接字符串分割
+                                # 假设路径以 /question_images/filename.jpg 结尾
+                                if "/question_images/" in full_path:
+                                    parts = full_path.split("/question_images/")
+                                    # 取最后一部分作为文件名
+                                    filename = parts[-1]
+                                    # 取前一部分的最后一个文件夹名作为 subset_name
+                                    # parts[0] 可能是 .../probability_theory_4
+                                    subset_name = os.path.basename(parts[0])
+                                    
+                                    # 重组路径
+                                    rescue_path = os.path.join(FORCE_ROOT, subset_name, "question_images", filename)
+                                else:
+                                    rescue_path = None
+                            else:
+                                # 结构看起来正常，直接用提取出的名字重组
+                                rescue_path = os.path.join(FORCE_ROOT, grandparent_dir_name, "question_images", filename)
+                            
+                            # 3. 检查重组后的路径是否存在
+                            if rescue_path and os.path.isfile(rescue_path):
+                                self.logger.warning(f"Path Rescue Success: Redirected\nFrom: {full_path}\nTo:   {rescue_path}")
+                                full_path = rescue_path
+                    except Exception as e:
+                        # 如果解析过程出错，不做处理，让它继续走下面的报错流程
+                        pass
+                # =========================================================================
+                # [修改结束]
+                # =========================================================================
+
                 # 检查路径是否存在
                 if not os.path.isfile(full_path):
                     self.logger.warning(f"Image file not found: {full_path} (from question index {index})")
@@ -154,12 +194,10 @@ class VQAReasoningAnswerGenerator(OperatorABC):
                 
                 last_end = match.end()
 
-            # 4d. 提取尾部文本
             trailing_text = question[last_end:].strip()
             if trailing_text:
                 current_user_prompt += trailing_text
                 
-            # 5. 存储该请求的结果
             if vqa_complete:
                 list_of_image_paths.append(current_paths)
                 list_of_text_segments.append(current_segments)
@@ -184,15 +222,9 @@ class VQAReasoningAnswerGenerator(OperatorABC):
         dataframe = storage.read("dataframe")
         self._validate_dataframe(dataframe)
         
-        # 1. 准备 VLM 输入: 解析 Markdown 并获取路径和文本片段
         user_prompts, list_of_image_paths, list_of_image_labels, vqa_ids = self._prepare_vlm_inputs(dataframe)
         
-        # 2. 获取 System Prompt (假设它存储在 self.prompts 对象中)
-        # 如果 self.prompts 没有 system_prompt 属性，则使用默认值。
         system_prompt = "You are an intelligent chatbot designed for writing the answer of the given question."
-        
-        # 3. 调用 VLM serving 的多图推理方法
-        # list_of_image_labels 传入的是交错的文本片段 (包括从 Markdown 中提取的 label 和文本)
         
         answers = self.llm_serving.generate_from_input_multi_images(
             list_of_image_paths=list_of_image_paths,
@@ -201,9 +233,7 @@ class VQAReasoningAnswerGenerator(OperatorABC):
             user_prompts=user_prompts
         )
 
-        
         if self.skip_text_only:
-            # 只写入vqa_ids指明的行
             dataframe = dataframe.loc[vqa_ids].copy()
         
         dataframe[self.output_key] = answers
