@@ -8,6 +8,7 @@ from dataflow.operators.core_text import PandasOperator, PromptTemplatedGenerato
 from operators.bench_evaluate import BenchDatasetEvaluatorQuestion
 from operators.answer_extractor import AnswerExtractionOperator
 from operators.question_refiner import AddMissingBlankOperator
+from operators.question_answer_clean import LLMTextCleanerOperator
 
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
@@ -18,6 +19,7 @@ from dataflow.operators.reasoning import (
 from dataflow.prompts.reasoning.general import GeneralAnswerGeneratorPrompt
 from prompts.bench_sampling import BenchSamplingPrompt, SubQuestionSplitingPrompt, QAFilterPrompt
 from prompts.question_refine import AddMissingBlankPrompt
+from prompts.question_answer_clean import TextCleaningPrompt
 from dataflow.prompts.core_text import StrFormatPrompt
 from dataflow.operators.core_text import GeneralFilter
 import argparse
@@ -42,6 +44,12 @@ class BenchSamplingPipeline():
                 model_name="gpt-5-mini",
                 max_workers=100,
         )
+        self.llm_clean_serving = APILLMServing_request(
+                api_url="http://123.129.219.111:3000/v1/chat/completions",
+                model_name="deepseek-v3",
+                max_workers=100,
+        )
+
         # 拆小题
         self.sub_qa_justify = PromptTemplatedGenerator(
             llm_serving = self.llm_serving,
@@ -102,6 +110,12 @@ class BenchSamplingPipeline():
             prompt_template=None, # using default prompt
             eval_result_path="../eval_result_math_test.json",
             support_subquestions=True
+        )
+
+        # question和answer的非内容型过滤
+        self.text_cleaner = LLMTextCleanerOperator(
+            llm_serving=self.llm_serving,           # gpt-5-mini 效果不好可以换成 llm_clean_serving
+            prompt_template=TextCleaningPrompt()
         )
         
     def forward(self):
@@ -171,6 +185,13 @@ class BenchSamplingPipeline():
         #     input_gt_answer_key="answer",
         #     input_question_key="question",
         #   )
+
+        self.text_cleaner.run(
+            storage=self.storage.step(),
+            question_column="question",
+            answer_column="answer",
+            output_key="cleaned_dataframe"
+        )
 
 
 def split_generated_content(df: pd.DataFrame) -> pd.DataFrame:
