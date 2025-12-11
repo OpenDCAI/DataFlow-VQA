@@ -40,7 +40,7 @@ def make_remove_think_fn():
     
     return fn
 
-class BenchSamplingPipeline():
+class VQAEvaluatePipeline():
     def __init__(self, first_entry_file_name, cache_path, file_name_prefix, eval_result_path, cache_type="json"):
         self.storage = FileStorage(
             first_entry_file_name=first_entry_file_name, ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
@@ -85,7 +85,7 @@ class BenchSamplingPipeline():
             support_subquestions=True
         )
         
-    def forward(self, input_image_default_basedir):
+    def forward(self):
                 
         self.difficulty_filter.run(storage = self.storage.step())
         
@@ -94,7 +94,6 @@ class BenchSamplingPipeline():
             storage = self.storage.step(),
             input_key = "question", 
             output_key = "llm_answer",
-            input_image_default_basedir=input_image_default_basedir
         )
         
         
@@ -117,7 +116,6 @@ if __name__ == "__main__":
     cache_path = f"./eval_cache/all_math_vqa_only"
     file_name_prefix = f"math-gpt-5-mini"
     eval_result_path = f"./eval_cache/all_math_vqa_only/eval_results.jsonl"
-    input_image_default_basedir = f"./"
     
-    model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path)
-    model.forward(input_image_default_basedir)
+    model = VQAEvaluatePipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path)
+    model.forward()

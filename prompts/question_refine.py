@@ -49,3 +49,33 @@ class AddMissingBlankPrompt(PromptABC):
             prompt = prompt.replace(f"{{{key}}}", str(value))
 
         return prompt
+    
+@PROMPT_REGISTRY.register()
+class CaptionPrompt(PromptABC):
+    '''
+    The prompt for generating captions for images in a question.
+    '''
+    def __init__(self):
+        pass
+
+    def build_prompt(self, question: str) -> str:
+        """
+        为给定数学题目生成系统提示信息
+        """
+        prompt = (
+            r'''Now you will play the role as a teacher to help students better understand the question by generating a detailed caption for the image in the question.
+            You will be given a question that may contain multiple images. Describe each image in detail to help students visualize the problem better.
+            However, do not solve the question or provide any answers or hints. Focus solely on describing the images.
+            
+            [Important Notice]
+            Some questions may contain irrelevant images. In such cases, the caption should be exactly as "IRRELEVANT".
+            
+            [Output Format]
+            A json array where each element corresponds to an image in the question. Each element should be a string describing the respective image in detail.
+            For example: ["Caption for image 1", "Caption for image 2", ...]
+            The number of captions should correspond to the number of images provided in the question. Don't create multiple captions for a single image (even if it contains multiple sub-images).
+            
+            Now, here is the question:
+    '''
+        )
+        return prompt + question

@@ -30,7 +30,8 @@ class BenchDatasetEvaluatorQuestion(OperatorABC):
                 system_prompt: str = "You are a helpful assistant specialized in evaluating answer correctness.",
                 llm_serving: LLMServingABC = None,
                 prompt_template: DIYPromptABC = None,
-                support_subquestions: bool = False
+                support_subquestions: bool = False,
+                skip_true: bool = False, # 是否跳过已经验证过为True的样本
                 ):
         
         if eval_result_path is None:
@@ -53,6 +54,7 @@ class BenchDatasetEvaluatorQuestion(OperatorABC):
             self.system_prompt = system_prompt
             self.llm_serving = llm_serving
             self.support_subquestions = support_subquestions
+            self.skip_true = skip_true
             
         self.logger = get_logger()
     
@@ -212,7 +214,8 @@ class BenchDatasetEvaluatorQuestion(OperatorABC):
         self.question_key = input_question_key
         
         dataframe = storage.read("dataframe")
-        dataframe['answer_match_result'] = False
+        if 'answer_match_result' not in dataframe.columns:
+            dataframe['answer_match_result'] = False
         answers = dataframe[self.test_answer_key]
         ground_truths = dataframe[self.gt_answer_key]
     
@@ -243,12 +246,14 @@ class BenchDatasetEvaluatorQuestion(OperatorABC):
             ) is False:
                 return required_columns
             
-            empty_reference_mask = dataframe[input_gt_answer_key].isna() | (dataframe[input_gt_answer_key] == '')
+            empty_reference_mask = dataframe[input_gt_answer_key].isna() | (dataframe[input_gt_answer_key] == '') 
+            if self.skip_true:
+                empty_reference_mask = empty_reference_mask | (dataframe['answer_match_result'] == True)
             skipped_rows = dataframe[empty_reference_mask]
             valid_rows = dataframe[~empty_reference_mask]
             skipped_count = len(skipped_rows)
             
-            if len(valid_rows) == 0:
+            if len(valid_rows) == 0 and not self.skip_true:
                 self.logger.warning("No valid samples with reference answers found. All samples skipped.")
                 if self.keep_all_samples:
                     output_file = storage.write(dataframe)  # 保留所有行，但answer_match_result都为False
