@@ -48,7 +48,7 @@ class BenchSamplingPipeline(PipelineABC):
         )
         self.llm_clean_serving = APILLMServing_request(
                 api_url="http://123.129.219.111:3000/v1/chat/completions",
-                model_name="deepseek-v3",
+                model_name="deepseek-v3.2",
                 max_workers=100,
         )
 
@@ -297,12 +297,26 @@ if __name__ == "__main__":
 
     name = args.name
 
-    for i in range(1, args.end + 1):
+    # for i in range(1, args.end + 1):
     
-        first_entry_file_name=f"/data1/VQA_ready_data/{name}_{i}/vqa_filtered_qa_pairs.jsonl"
-        cache_path = f"/data1/VQA_ready_data/{name}_{i}"
-        file_name_prefix = f"{name}_{i}"
+    #     first_entry_file_name=f"/data1/VQA_ready_data/{name}_{i}/vqa_filtered_qa_pairs.jsonl"
+    #     cache_path = f"/data1/VQA_ready_data/{name}_{i}"
+    #     file_name_prefix = f"{name}_{i}"
         
-        model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
-        model.compile()
-        model.forward(resume_step=10)
+    #     model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
+    #     model.compile()
+    #     model.forward(resume_step=10)
+    
+    ##############################################################################
+    # 重要：现在改成了只跑一个数字，而不是学科内的多个数字全跑，增加灵活性
+    ##############################################################################
+    
+    end = args.end
+    
+    first_entry_file_name=f"/data1/VQA_ready_data/{name}_{end}/vqa_filtered_qa_pairs.jsonl"
+    cache_path = f"/data1/VQA_ready_data/{name}_{end}"
+    file_name_prefix = f"{name}_{end}"
+    
+    model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
+    model.compile()
+    model.forward(resume_step=10)
