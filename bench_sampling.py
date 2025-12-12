@@ -10,6 +10,7 @@ from operators.answer_extractor import AnswerExtractionOperator
 from operators.question_refiner import AddMissingBlankOperator
 from operators.question_answer_clean import LLMTextCleanerOperator
 
+from dataflow.pipeline import PipelineABC
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
 from dataflow.operators.reasoning import (
@@ -24,8 +25,9 @@ from dataflow.prompts.core_text import StrFormatPrompt
 from dataflow.operators.core_text import GeneralFilter
 import argparse
 
-class BenchSamplingPipeline():
+class BenchSamplingPipeline(PipelineABC):
     def __init__(self, first_entry_file_name, cache_path, file_name_prefix, cache_type="json"):
+        super().__init__()
         self.storage = FileStorage(
             first_entry_file_name=first_entry_file_name, ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
             cache_path=cache_path,
@@ -302,4 +304,5 @@ if __name__ == "__main__":
         file_name_prefix = f"{name}_{i}"
         
         model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
-        model.forward()
+        model.compile()
+        model.forward(resume_step=10)
