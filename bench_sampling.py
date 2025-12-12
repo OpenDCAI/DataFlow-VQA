@@ -160,6 +160,13 @@ class BenchSamplingPipeline(PipelineABC):
             output_key = "question",
         )
         
+        self.text_cleaner.run(
+            storage=self.storage.step(),
+            question_column="question",
+            answer_column="answer",
+            output_key="cleaned_dataframe"
+        )
+        
         self.qa_filter.run(
             storage = self.storage.step(),
             input_question = "question",
@@ -187,13 +194,6 @@ class BenchSamplingPipeline(PipelineABC):
         #     input_gt_answer_key="answer",
         #     input_question_key="question",
         #   )
-
-        self.text_cleaner.run(
-            storage=self.storage.step(),
-            question_column="question",
-            answer_column="answer",
-            output_key="cleaned_dataframe"
-        )
 
 
 def split_generated_content(df: pd.DataFrame) -> pd.DataFrame:
@@ -319,4 +319,4 @@ if __name__ == "__main__":
     
     model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
     model.compile()
-    model.forward(resume_step=10)
+    model.forward(resume_step=7)

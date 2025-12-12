@@ -178,19 +178,27 @@ class QAFilterPrompt(DIYPromptABC):
         Answer: {input_answer}
         
         [Criteria]
-        1. The question must be suitable for an exam setting, meaning it should raise a clear problem that requires a specific solution.
-            Examples, statements without questions, open-ended discussions and other context that do not pose a clear problem are not suitable.
+        1. Clarity: The question must be suitable for an exam setting, meaning it should raise **a clear problem** that requires a specific solution.
+            Examples, **statements without questions**, open-ended discussions and other context that do not pose a clear problem are not suitable.
             Questions like "Give an example of..." that can have many valid answers are also not suitable.
+            You should be particularly careful with questions that **only provide a topic or theme** without a specific problem to solve.
+            For instance, "all primes less than 100" is not a valid question, because it does not specify what to do (listing, counting, ...) with those primes.
+            Instead, a question like "List all primes less than 100" or "How many primes are there less than 100?" would be suitable.
         2. Relevance: The answer must directly address the question asked.
             If the answer seems to be addressing a different question and is wrongly paired with the given question, it is not suitable.
         3. Completeness and Self-Containment: The question and answer should be complete and self-contained, providing all necessary information for understanding and solving it without requiring external context.
            Questions that rely heavily on prior context or external references are not suitable.
            Answers such as "Refer to theorem X", "Corollary of previous result", "Answered in the text above", "Omitted for brevity" are not acceptable.
            Incomplete questions or answers that leave out critical information are also not suitable.
+        4. Explicit Task Requirement: The question must contain an explicit task phrase (such as "compute", "determine", "find", "prove", "list", "show", "give the value of", etc.).
+            Pure expressions or noun phrases are NOT acceptable even if they are commonly understood as implicit tasks in mathematical contexts. 
+            If the question does not include an explicit verb specifying what the student must do, it must be judged unsuitable.
+            Of course, if the question is in a multiple-choice or fill-in-the-blank format, the choices or blanks themselves will serve as the explicit task requirement.
            
         [Important Notice]
         1. You do not need to evaluate the correctness of the answer, only whether it is appropriate and complete in relation to the question.
         2. Short answer with no explanation (calculation, proof, counterexample, ...) is acceptable as long as it directly addresses the question.
+        3. You should be very strict in your evaluation. If any of the criteria above are not fully met, the question-answer pair should be considered unsuitable.
            
         [Output Format]
         Return a JSON object with the following fields:

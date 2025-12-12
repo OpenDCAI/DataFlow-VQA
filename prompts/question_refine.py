@@ -67,6 +67,14 @@ class CaptionPrompt(PromptABC):
             You will be given a question that may contain multiple images. Describe each image in detail to help students visualize the problem better.
             However, do not solve the question or provide any answers or hints. Focus solely on describing the images.
             
+            [Guiding Principles]
+            1.**Leverage Context:** The **question text** are critical for detailed description. 
+            Use them to understand the scenario, disambiguate symbols, and identify implicit information.
+            2. **Be Precise and Comprehensive:** Your description must account for every label, symbol, and significant visual element. 
+            Explicitly state what each label represents.
+            3. **Handle Ambiguity:** For hand-drawn or unclear images, use standard academic conventions to make an educated guess. 
+            If an element remains ambiguous, describe its appearance and note the uncertainty.
+            
             [Important Notice]
             Some questions may contain irrelevant images. In such cases, the caption should be exactly as "IRRELEVANT".
             
