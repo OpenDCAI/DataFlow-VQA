@@ -51,11 +51,11 @@ class RejectSamplingPipeline():
         self.logger = get_logger()
 
         self.llm_answer_serving = LocalVLMServing_vllm(
-            hf_model_name_or_path="/data0/models/Qwen3-VL-8B-Thinking",
+            hf_model_name_or_path="/data0/models/Qwen3-VL-32B-Thinking",
             vllm_temperature=0.5,
             vllm_tensor_parallel_size=8,
-            vllm_max_tokens=16384,
-            vllm_max_model_len=128000,
+            vllm_max_tokens=8192,
+            vllm_max_model_len=12800,
             vllm_gpu_memory_utilization=0.6,
             vllm_limit_mm_per_prompt=10,
             vllm_repetition_penalty=1.1,
@@ -98,13 +98,15 @@ class RejectSamplingPipeline():
         
         for i in range(self.max_retries):
         
+            input_skip_key="answer_match_result" if i > 0 else None
+            
             # llm回答（跳过已经做对的题）
             self.answer_generator.run(
                 storage = self.storage.step(),
                 input_key = "question", 
                 output_key = "generated_cot",
                 input_caption_key="captions",
-                input_skip_key="answer_match_result",
+                input_skip_key=input_skip_key,
             )
             
 
@@ -127,9 +129,9 @@ class RejectSamplingPipeline():
                 self.logger.warning(f"Eval failed at reject sampling round {i+1}: {e}")
 
 if __name__ == "__main__":
-    first_entry_file_name=f"/data1/djw/VQA_1209/caption_cache/gpt-5-mini_step2.json"
-    cache_path = f"./cot_cache/all_vqa_only"
-    file_name_prefix = f"qwen3_vl_8b_reject_sampling"
+    first_entry_file_name=f"/data1/djw/VQA_1209/caption_cache/gpt-5-mini_step3.json"
+    cache_path = f"./cot_cache/vqa_1209_top1000"
+    file_name_prefix = f"qwen3_vl_32b_reject_sampling"
     eval_result_path = f"./cot_cache/all_vqa_only/eval_results.jsonl"
     max_retries = 3
     

@@ -67,8 +67,8 @@ class VQAReasoningAnswerGenerator(OperatorABC):
             return "AnswerGenerator produces answers for questions using large language models."
 
     def _validate_dataframe(self, dataframe: pd.DataFrame):
-        required_keys = [self.input_key]
-        missing = [k for k in required_keys if k not in dataframe.columns]
+        required_keys = [self.input_key, self.input_image_basedir_key, self.input_caption_key, self.input_skip_key]
+        missing = [k for k in required_keys if k!=None and k not in dataframe.columns]
         if missing:
             raise ValueError(f"Missing required column(s): {missing}")
 
@@ -123,6 +123,12 @@ class VQAReasoningAnswerGenerator(OperatorABC):
                         if dataframe.loc[index, self.input_skip_key]:
                             continue
                     final_prompt_text = self.prompts.build_prompt(question)
+                    # 如果caption key存在，添加caption信息
+                    if self.input_caption_key != None and self.input_caption_key in dataframe.columns:
+                        captions = dataframe.loc[index, self.input_caption_key]
+                        if captions and isinstance(captions, list):
+                            for cap_i, caption in enumerate(captions):
+                                final_prompt_text += f"\n Description of image {cap_i+1}: {caption}"
                     user_prompts.append(final_prompt_text)
                     list_of_image_paths.append([])
                     list_of_text_segments.append([])
@@ -219,8 +225,9 @@ class VQAReasoningAnswerGenerator(OperatorABC):
             # 如果caption key存在，添加caption信息
             if self.input_caption_key != None and self.input_caption_key in dataframe.columns:
                 captions = dataframe.loc[index, self.input_caption_key]
-                for cap_i, caption in enumerate(captions):
-                    current_user_prompt += f"\n Description of image {cap_i+1}: {caption}"
+                if captions and isinstance(captions, list):
+                    for cap_i, caption in enumerate(captions):
+                        current_user_prompt += f"\n Description of image {cap_i+1}: {caption}"
                 
             # 5. 存储该请求的结果
             if vqa_complete:

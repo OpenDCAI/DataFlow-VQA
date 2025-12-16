@@ -1,8 +1,6 @@
 import os
 import sys
 import json5
-import pandas as pd
-from transformers import Pipeline
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from operators.vqa_answer_generator import VQAReasoningAnswerGenerator
 
@@ -12,6 +10,7 @@ from dataflow.serving import APILLMServing_request, APIVLMServing_openai
 from dataflow.operators.core_text import PandasOperator
 from dataflow.utils.storage import FileStorage
 from dataflow import get_logger
+from dataflow.operators.core_text import GeneralFilter
 
 from prompts.question_refine import CaptionPrompt
 
@@ -26,6 +25,8 @@ def make_get_caption_and_remove_irrelevant_image(question_key="question", captio
             question = row[question_key]
             captions = row[caption_key]
             try:
+                # cleanup extra whitespace and all '\n's
+                captions = re.sub(r'\s{2,}', ' ', captions.replace('\n', ' ')).strip()
                 captions = json5.loads(captions)
                 assert isinstance(captions, list)
             except:
@@ -51,6 +52,9 @@ def make_get_caption_and_remove_irrelevant_image(question_key="question", captio
             # cleanup extra whitespace left after removals
             question = re.sub(r'\s{2,}', ' ', question).strip()
             df.at[idx, question_key] = question
+            
+            # Update captions to only include relevant ones
+            captions = [captions[j] for j in range(len(captions)) if not (isinstance(captions[j], str) and captions[j].strip().upper() == "IRRELEVANT")]
             df.at[idx, caption_key] = captions
 
         return df
@@ -88,6 +92,10 @@ class CaptionGeneratingPipeline(PipelineABC):
         
         self.post_processor = PandasOperator(process_fn=[ make_get_caption_and_remove_irrelevant_image(question_key="question", caption_key="captions") ])
         
+        self.no_caption_filter = GeneralFilter(
+            filter_rules=[lambda df: df['captions'].apply(lambda x: len(x) != 0)]
+        )
+        
     def forward(self):
                 
         self.caption_generator.run(
@@ -99,9 +107,13 @@ class CaptionGeneratingPipeline(PipelineABC):
         self.post_processor.run(
             storage = self.storage.step(),
         )
+        
+        self.no_caption_filter.run(
+            storage = self.storage.step(),
+        )
 
 if __name__ == "__main__":
-    first_entry_file_name=f"/data1/djw/VQA_1209/vision_only_shuffled_top100.json"
+    first_entry_file_name=f"/data1/djw/VQA_1209/vision_only_shuffled_top1000.json"
     cache_path = f"/data1/djw/VQA_1209/caption_cache"
     file_name_prefix = f"gpt-5-mini"
     input_image_default_basedir = f"./"
