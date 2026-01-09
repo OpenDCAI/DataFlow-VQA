@@ -7,7 +7,9 @@ from dataflow.core import LLMServingABC
 from dataflow.prompts.reasoning.math import MathAnswerGeneratorPrompt
 from dataflow.prompts.reasoning.general import GeneralAnswerGeneratorPrompt
 from dataflow.prompts.reasoning.diy import DiyAnswerGeneratorPrompt
+from prompts.bench_evaluate import SimpleAnswerGeneratorPrompt
 from prompts.question_refine import CaptionPrompt
+from prompts.cot_with_solution import GeneralAnswerWithSolutionGeneratorPrompt
 from dataflow.core.prompt import prompt_restrict, DIYPromptABC
 
 import pandas as pd
@@ -19,7 +21,9 @@ import os
 @prompt_restrict(
     MathAnswerGeneratorPrompt,
     GeneralAnswerGeneratorPrompt,
+    GeneralAnswerWithSolutionGeneratorPrompt,
     CaptionPrompt,
+    SimpleAnswerGeneratorPrompt,
     DiyAnswerGeneratorPrompt
 )
 @OPERATOR_REGISTRY.register()
@@ -67,7 +71,7 @@ class VQAReasoningAnswerGenerator(OperatorABC):
             return "AnswerGenerator produces answers for questions using large language models."
 
     def _validate_dataframe(self, dataframe: pd.DataFrame):
-        required_keys = [self.input_key, self.input_image_basedir_key, self.input_caption_key, self.input_skip_key]
+        required_keys = [self.input_key, self.input_caption_key, self.input_skip_key, self.input_solution_key]
         missing = [k for k in required_keys if k!=None and k not in dataframe.columns]
         if missing:
             raise ValueError(f"Missing required column(s): {missing}")
@@ -96,6 +100,8 @@ class VQAReasoningAnswerGenerator(OperatorABC):
         
         unskipped_ids = []
         
+        question_without_image_count = 0
+        
         for index, question in enumerate(questions):
             
             # 1. 确定 Base Directory (图像的根目录)
@@ -108,7 +114,7 @@ class VQAReasoningAnswerGenerator(OperatorABC):
             # 2. 准备该请求的结构
             current_paths: List[str] = []
             current_segments: List[str] = []
-            current_user_prompt: str = ""
+            current_user_prompt: str = "Question: "
             
             last_end = 0
             
@@ -117,6 +123,7 @@ class VQAReasoningAnswerGenerator(OperatorABC):
             
             # 3. 处理纯文本或交错文本/图像
             if (not matches):
+                question_without_image_count += 1
                 if (not self.skip_text_only):
                     # 纯文本提示：直接构建提示并作为唯一的文本片段
                     if self.input_skip_key != None and self.input_skip_key in dataframe.columns:
@@ -129,6 +136,11 @@ class VQAReasoningAnswerGenerator(OperatorABC):
                         if captions and isinstance(captions, list):
                             for cap_i, caption in enumerate(captions):
                                 final_prompt_text += f"\n Description of image {cap_i+1}: {caption}"
+                    # 如果solution key存在，添加solution信息
+                    if self.input_solution_key != None and self.input_solution_key in dataframe.columns:
+                        solution = dataframe.loc[index, self.input_solution_key]
+                        if solution and isinstance(solution, str):
+                            final_prompt_text += f"\n The reference solution is: {solution}"
                     user_prompts.append(final_prompt_text)
                     list_of_image_paths.append([])
                     list_of_text_segments.append([])
@@ -228,6 +240,12 @@ class VQAReasoningAnswerGenerator(OperatorABC):
                 if captions and isinstance(captions, list):
                     for cap_i, caption in enumerate(captions):
                         current_user_prompt += f"\n Description of image {cap_i+1}: {caption}"
+            
+            # 如果solution key存在，添加solution信息
+            if self.input_solution_key != None and self.input_solution_key in dataframe.columns:
+                solution = dataframe.loc[index, self.input_solution_key]
+                if solution and isinstance(solution, str):
+                    current_user_prompt += f"\n The reference solution is: {solution}"
                 
             # 5. 存储该请求的结果
             if vqa_complete:
@@ -240,7 +258,11 @@ class VQAReasoningAnswerGenerator(OperatorABC):
                 user_prompts.append(self.prompts.build_prompt(current_user_prompt))
                 unskipped_ids.append(index)
                 
-
+        if (not self.skip_text_only):
+            self.logger.info(f"Total questions without images: {question_without_image_count}")
+        else:
+            self.logger.info(f"Total questions without images (skipped): {question_without_image_count}")
+        
         return user_prompts, list_of_image_paths, list_of_text_segments, vqa_ids, unskipped_ids
 
     def run(
@@ -251,6 +273,7 @@ class VQAReasoningAnswerGenerator(OperatorABC):
         input_caption_key: str | None = None,
         input_skip_key: str | None = None,
         input_image_basedir_key = "image_basedir",
+        input_solution_key: str | None = None
         ):
         '''
         Runs the answer generation process, reading from the input file and saving results to output.
@@ -259,6 +282,7 @@ class VQAReasoningAnswerGenerator(OperatorABC):
         self.input_caption_key = input_caption_key
         self.input_skip_key = input_skip_key
         self.input_image_basedir_key = input_image_basedir_key
+        self.input_solution_key = input_solution_key
         dataframe = storage.read("dataframe")
         self._validate_dataframe(dataframe)
         

@@ -96,12 +96,12 @@ class VQARolloutPipeline():
         )
 
         self.llm_answer_serving = LocalVLMServing_vllm(
-            hf_model_name_or_path="/data0/models/Qwen3-VL-8B-Instruct",
-            vllm_temperature=0.5,
+            hf_model_name_or_path="/data0/models/Qwen3-VL-32B-Thinking",
+            vllm_temperature=0.7,
             vllm_tensor_parallel_size=4,
             vllm_max_tokens=8192,
-            vllm_max_model_len=128000,
-            vllm_gpu_memory_utilization=0.6,
+            vllm_max_model_len=12800,
+            vllm_gpu_memory_utilization=0.7,
             vllm_limit_mm_per_prompt=10,
             vllm_repetition_penalty=1.1,
             batch_size=128
@@ -121,6 +121,7 @@ class VQARolloutPipeline():
             llm_serving=self.llm_answer_serving,
             prompt_template=MathAnswerGeneratorPrompt(),
             skip_text_only=True,
+            input_image_default_basedir="/data0/djw/camelai"
         )
         
         self.think_cleaner = PandasOperator(process_fn=[ make_remove_think_fn() ])
@@ -165,10 +166,10 @@ class VQARolloutPipeline():
 
 if __name__ == "__main__":
     
-    first_entry_file_name=f"/data1/VQA_ready_data/all_vqa.jsonl"
-    cache_path = f"./rollout_cache/all_math_vqa_only"
-    file_name_prefix = f"math-Qwen3-8B-Instruct"
-    eval_result_path = f"./rollout_cache/all_math/eval_results.jsonl"
+    first_entry_file_name=f"/data0/djw/camelai/cleaned.json"
+    cache_path = f"./rollout_cache/camelai_math/"
+    file_name_prefix = f"math-Qwen3-32B-Thinking"
+    eval_result_path = f"./rollout_cache/camelai_math/eval_results.jsonl"
     
     model = VQARolloutPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path)
     model.forward()

@@ -113,11 +113,11 @@ class CaptionGeneratingPipeline(PipelineABC):
         )
 
 if __name__ == "__main__":
-    first_entry_file_name=f"/data1/djw/VQA_1209/vision_only_shuffled_top1000.json"
-    cache_path = f"/data1/djw/VQA_1209/caption_cache"
+    first_entry_file_name=f"/data0/djw/VQA_1209/vision_only_train.json"
+    cache_path = f"/data0/djw/VQA_1209/train_caption_cache"
     file_name_prefix = f"gpt-5-mini"
     input_image_default_basedir = f"./"
     
     model = CaptionGeneratingPipeline(first_entry_file_name, cache_path, file_name_prefix, input_image_default_basedir)
     model.compile()
-    model._compiled_forward(resume_step=1)
+    model._compiled_forward()

@@ -41,6 +41,7 @@ class BenchDatasetEvaluatorQuestion(OperatorABC):
         self.eval_result_path = eval_result_path
         self.compare_method = compare_method
         self.empty_responses_count = 0  # 添加空响应计数器
+        self.support_subquestions = support_subquestions
         
         if compare_method == "match":
             self.compare = self.math_verify_compare
@@ -53,17 +54,20 @@ class BenchDatasetEvaluatorQuestion(OperatorABC):
             self.prompt_template = prompt_template
             self.system_prompt = system_prompt
             self.llm_serving = llm_serving
-            self.support_subquestions = support_subquestions
             self.skip_true = skip_true
             
         self.logger = get_logger()
     
     def math_verify_compare(self, answer, ground_truth):
+        # 如果answer是一个单独的大写字母，不需要经过parse处理
+        if isinstance(answer, str) and re.fullmatch(r'[A-Z]', answer.strip()):
+            return verify(ground_truth, answer.strip())
+    
         try:
-            return verify(parse(str(ground_truth)), parse(str(answer)))
+            return verify(ground_truth, parse(str(answer)))
         except:
             try:
-                return verify(parse(ground_truth), parse(answer))
+                return verify(ground_truth, parse(answer))
             except:
                 return False
 

@@ -12,7 +12,7 @@ from dataflow.operators.reasoning import (
     ReasoningAnswerGenerator,
     ReasoningAnswerGroundTruthFilter
 )
-from dataflow.prompts.reasoning.math import MathAnswerGeneratorPrompt
+from dataflow.prompts.reasoning.general import GeneralAnswerGeneratorPrompt
 from dataflow.operators.core_text import GeneralFilter
 from dataflow import get_logger
 
@@ -52,12 +52,12 @@ class RejectSamplingPipeline():
 
         self.llm_answer_serving = LocalVLMServing_vllm(
             hf_model_name_or_path="/data0/models/Qwen3-VL-32B-Thinking",
-            vllm_temperature=0.5,
-            vllm_tensor_parallel_size=8,
+            vllm_temperature=0.7,
+            vllm_tensor_parallel_size=4,
             vllm_max_tokens=8192,
             vllm_max_model_len=12800,
-            vllm_gpu_memory_utilization=0.6,
-            vllm_limit_mm_per_prompt=10,
+            vllm_gpu_memory_utilization=0.7,
+            vllm_limit_mm_per_prompt=15,
             vllm_repetition_penalty=1.1,
             batch_size=128
         )
@@ -76,8 +76,9 @@ class RejectSamplingPipeline():
         #llm 回答
         self.answer_generator = VQAReasoningAnswerGenerator(
             llm_serving=self.llm_answer_serving,
-            prompt_template=MathAnswerGeneratorPrompt(),
-            skip_text_only=True,
+            prompt_template=GeneralAnswerGeneratorPrompt(),
+            skip_text_only=False,
+            input_image_default_basedir="/data0/djw/camelai"
         )
         
         self.think_cleaner = PandasOperator(process_fn=[ make_remove_think_fn(input_key="generated_cot", output_key="llm_short_answer") ])
@@ -105,7 +106,7 @@ class RejectSamplingPipeline():
                 storage = self.storage.step(),
                 input_key = "question", 
                 output_key = "generated_cot",
-                input_caption_key="captions",
+                # input_caption_key="captions",
                 input_skip_key=input_skip_key,
             )
             
@@ -129,10 +130,10 @@ class RejectSamplingPipeline():
                 self.logger.warning(f"Eval failed at reject sampling round {i+1}: {e}")
 
 if __name__ == "__main__":
-    first_entry_file_name=f"/data1/djw/VQA_1209/caption_cache/gpt-5-mini_step3.json"
-    cache_path = f"./cot_cache/vqa_1209_top1000"
-    file_name_prefix = f"qwen3_vl_32b_reject_sampling"
-    eval_result_path = f"./cot_cache/all_vqa_only/eval_results.jsonl"
+    first_entry_file_name=f"/data0/djw/camelai/cleaned.json"
+    cache_path = f"./cot_cache/camelai_math/"
+    file_name_prefix = f"math-Qwen3-32B-Thinking"
+    eval_result_path = f"./cot_cache/camelai_math/eval_results.jsonl"
     max_retries = 3
     
     model = RejectSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path, max_retries)

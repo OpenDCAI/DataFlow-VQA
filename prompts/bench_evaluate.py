@@ -107,3 +107,17 @@ class AnswerJudgeMultipleQuestionsPrompt(PromptABC):
         Your judgment:
         """
         return prompt
+    
+@PROMPT_REGISTRY.register()
+class SimpleAnswerGeneratorPrompt(PromptABC):
+    '''
+    The prompt for the answer generator.
+    '''
+    def __init__(self):
+        pass
+
+    def build_prompt(self, question: str) -> str:
+        """
+        for general reasoning answer generation
+        """
+        return question + "\n Please think step by step and give the final answer."
