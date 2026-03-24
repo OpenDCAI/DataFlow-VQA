@@ -89,7 +89,9 @@ python -m pipelines.vqa_extract_optimized_pipeline \
   "answer": "$x = 1$ 或 $x = -1$",
   "solution": "因式分解 $(x-1)(x+1)=0$。",
   "label": 1,
-  "chapter_title": "第一章 二次方程"
+  "question_chapter_title": "第一章 二次方程",
+  "answer_chapter_title": "第一章 二次方程",
+  "image_basedir": "/path/to/your/images"
 }
 ```
 
@@ -127,7 +129,7 @@ self.mineru_executor = FileOrURLToMarkdownConverterFlash(
 3. **版面预处理**（`MinerU2LLMInputOperator`）：展平列表项并重新编号，生成 LLM 输入格式。
 4. **LLM 抽取**（`ChunkedPromptedGenerator`）：将版面 JSON 分块（每块最多 128k token），用 `QAExtractPrompt` 提示词批量调用 LLM，生成 XML 格式的问答对。
 5. **输出解析**（`LLMOutputParser`）：将 XML 响应解析为 JSONL，并将图片复制到 `vqa_images/`。
-6. **问答合并**（`QA_Merger`）：对于题目和答案分离的 PDF，根据章节标题和题目序号进行启发式匹配。
+6. **问答合并**（`QA_Merger`）：对于题目和答案分离的 PDF，根据章节标题和题目序号进行启发式匹配。可以设置一个strict_title_match参数，如果设置为True，会对章节标题进行严格匹配，否则会尝试提取标题中的中文/英文序号再匹配。
 
 </details>
 

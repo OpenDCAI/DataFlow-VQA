@@ -57,14 +57,15 @@ def merge_qa_pair(vqa_jsonl, output_jsonl, strict_title_match=False):
                     # 如果题号增加，章节标题却发生变化，说明可能错误提取了子标题。因此继续使用之前的章节标题。
                     data["chapter_title"] = chapter_title
             label = data["label"]
+            data["original_chapter_title"] = data["chapter_title"]
             data["chapter_title"] = refine_title(data["chapter_title"], strict_title_match)
             if data['label'] > 0:
                 # 已经完整的题目直接写入out_file
                 if data["answer"] or data["solution"]:
                     already_complete_count += 1
                     qa_pair = {
-                        "question_chapter_title": data["chapter_title"],
-                        "answer_chapter_title": data["chapter_title"],
+                        "question_chapter_title": data["original_chapter_title"],
+                        "answer_chapter_title": data["original_chapter_title"],
                         "label": data['label'],
                         "question": data["question"],
                         "answer": data["answer"],
@@ -112,8 +113,8 @@ def merge_qa_pair(vqa_jsonl, output_jsonl, strict_title_match=False):
         for label in questions:
             if label in answers:
                 qa_pair = {
-                    "question_chapter_title": questions[label]["chapter_title"],
-                    "answer_chapter_title": answers[label]["chapter_title"],
+                    "question_chapter_title": questions[label]["original_chapter_title"],
+                    "answer_chapter_title": answers[label]["original_chapter_title"],
                     "label": label[1],
                     "question": questions[label]["question"],
                     "answer": answers[label]["answer"],

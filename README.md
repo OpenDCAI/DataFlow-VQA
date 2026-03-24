@@ -91,7 +91,9 @@ Each QA item contains:
   "answer": "$x = 1$ or $x = -1$",
   "solution": "Factor as $(x-1)(x+1)=0$.",
   "label": 1,
-  "chapter_title": "Chapter 1: Quadratic Equations"
+  "question_chapter_title": "Chapter 1: Quadratic Equations",
+  "answer_chapter_title": "Chapter 1: Quadratic Equations",
+  "image_basedir": "/path/to/your/images"
 }
 ```
 
@@ -130,6 +132,7 @@ The extraction pipeline runs six steps:
 4. **LLM Extraction** (`ChunkedPromptedGenerator`): Chunks the layout JSON (max 128k tokens per chunk) and calls the LLM with `QAExtractPrompt` to extract QA pairs as structured XML.
 5. **Output Parsing** (`LLMOutputParser`): Parses the XML response into JSONL and copies images to `vqa_images/`.
 6. **QA Merging** (`QA_Merger`): For separated question/answer PDFs, matches question and answer blocks by chapter title and question number.
+This operator includes a `strict_title_match` parameter: When set to True, the operator performs an exact string match on chapter titles. Otherwise, the operator attempts to extract Chinese or English sequence numbers from the titles for matching.
 
 </details>
 

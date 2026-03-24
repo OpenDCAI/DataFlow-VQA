@@ -104,7 +104,7 @@ if __name__ == "__main__":
         max_workers=args.max_workers,
     )
     pipeline.compile()
-    pipeline.forward()
+    pipeline.forward(resume_step=5)
 
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
