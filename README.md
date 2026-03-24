@@ -1,43 +1,25 @@
+## VQA Extraction
 在根目录下跑
 ```bash
-python pipelines/vqa_extract_optimized_pipeline.py
+python -m pipelines.vqa_extract_optimized_pipeline --input_file ./examples/VQA/vqa_extract_test.jsonl --output_dir ./output
 ```
+请先在代码中配置模型。并使用`export DF_API_KEY=your_api_key`的方式设置好环境变量。
 可以extract VQA，注意进入代码中按照要求准备好输入的jsonl文件！
-切割出的VQA会存到`output_dir`中的`vqa_filtered_qa_pairs.jsonl`中。
-
-跑完extract后，可以直接用`bench_sampling.py`进行问题过滤和评测（对于没有answer的，会尝试从solution中提取answer）。
-
-注意目前都需要在代码中修改输入输出路径。
-
-## VQA Extraction
-这部分教程参考https://wcny4qa9krto.feishu.cn/wiki/I9tbw2qnBi0lEakmmAGclTysnFd 的1.10
-
-## Bench Sampling
-代码在`bench_sampling.py`当中。
-
-主函数（可以命令行跑，应该不太要自己改）：
-```python
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run BenchSamplingPipeline")
-    parser.add_argument("name", nargs="?", default="pde", help="dataset name (default: pde)")
-    parser.add_argument("end", nargs="?", type=int, default=3, help="range end for i (uses range(1, end + 1), default: 3)")
-    args = parser.parse_args()
-    
-    # Example usage:
-    # python bench_sampling.py pde 3
-
-    name = args.name
-
-    for i in range(1, args.end + 1):
-    
-        first_entry_file_name=f"/data1/VQA_ready_data/{name}_{i}/vqa_filtered_qa_pairs.jsonl"
-        cache_path = f"/data1/VQA_ready_data/{name}_{i}"
-        file_name_prefix = f"{name}_{i}"
-        
-        model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
-        model.forward()
+示例：
 ```
+{"input_pdf_paths": "./examples/VQA/questionextract_test.pdf", "name": "math1"}
+{"input_pdf_paths": ["./examples/VQA/math_question.pdf", "./examples/VQA/math_answer.pdf"], "name": "math2"}
+```
+其中`input_pdf_paths`可以是单个pdf文件，也可以是一个pdf文件列表（题目在前答案在后）。`name`是一个标识符。
 
+切割出的VQA会存到`output_dir`中的`raw_vqa.jsonl`中, 图片也保存在`output_dir`中，jsonl中的`image_basedir`项会指向图片的存储base路径。
+
+## Data Curation
+```python
+python -m pipelines.curate_data --input_file ./output/raw_vqa.jsonl
+```
+请先在代码中配置模型。并使用`export DF_API_KEY=your_api_key`的方式设置好环境变量。
+使用刚才extract出来的`raw_vqa.jsonl`作为输入文件，跑完之后会在同一目录下生成一个`curated_vqa.jsonl`，里面是经过过滤和清洗后的VQA数据，可以直接拿来做rollout了。
 这部分目前分为4个部分：[切小题](#切小题)，[判断题型](#判断题型)，[抽取答案](#抽取答案)，[题目过滤](#题目过滤)。
 
 ### 切小题
@@ -186,31 +168,14 @@ self.qa_filter_executor = GeneralFilter(
   }
 ```
 
-## Rollout
-这部分代码在`pipelines/vqa_rollout.py`当中。
-
-主函数：
+## Generate COT
+请先在代码中配置模型。并使用`export DF_API_KEY=your_api_key`的方式设置好环境变量。
 ```python
-first_entry_file_name=f"/data1/VQA_ready_data/all_vqa.jsonl"
-cache_path = f"./rollout_cache/all_math_vqa_only"
-file_name_prefix = f"math-Qwen3-8B-Instruct"
-eval_result_path = f"./rollout_cache/all_math/eval_results.jsonl"
-input_image_default_basedir = f"./"
-
-model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path)
-model.forward(input_image_default_basedir)
+python -m pipelines.generate_cot --input_file ./output/curated_vqa.jsonl --max_retries 5
 ```
-- `first_entry_file_name`: 输入文件，只要有question和answer两项即可。对于vqa，最好还要有`image_basedir`指明图片存储的根目录，会拼接到`!(CAPTION)[REL_PATH]`里面。
-  **收集上面bench sampling过滤出来的所有qa并添加image_basedir的代码参考`utils/collect_all_vqa.py`**
-- `cache_path`: 中间结果存储路径。
-- `file_name_prefix`: 中间结果存储文件名前缀（`PREFIX_step_x`）。
-- `eval_result_path`: 模型正确率存储路径。
-- `input_image_default_basedir`: 默认图片路径，前面如果设置了`image_basedir`，这里就可以随便设置。
 
+这部分分为3步：
 
-这部分分为5步：
-
-- 复制题目，比如要rollout 32次就复制32份题目。`self.dup_operator = PandasOperator(process_fn=[ make_rollout_dup_fn(32) ])`
 - llm 回答:
   ```python
   self.answer_generator = VQAReasoningAnswerGenerator(
@@ -259,49 +224,5 @@ self.answer_groundtruth_filter = BenchDatasetEvaluatorQuestion(
   }
 ]
 ```
-- 收集每道题的正确率：`self.agg_operator = PandasOperator(process_fn=[ make_rollout_aggregate_fn() ])`
 
-  之前每道题rollout了若干次，现在会把每道题的正确率收集起来，写入`rollout_num`和`accuracy`两项中。
-
-跑完上述内容后，完整结果示例：
-```json
-{
-    "question":"如图2.8所示的 RL 电路，试求：当开关 $S_{1}$ 合上 10 s 后，电感 $L$ 上的电流。 ![图2.8 RL电路](question_images\/04ce3abe2b816fcfa1f116c1a6459212ed270a74d803f31da9701038a969ef99.jpg)",
-    "question_chapter_title":null,
-    "answer_chapter_title":null,
-    "label":"3",
-    "answer":"I(10 s) = 5(1 - e^{-50}) \\approx 5 A.",
-    "solution":"解（1）设图2.8的电路上电流为  $I(t)$  ，当开关  $S_{1}$  合上时电路方程为\n\n$$\n\\frac {\\mathrm {d} I}{\\mathrm {d} t} + \\frac {R _ {1}}{L} I = \\frac {E}{L}, \\text {即} \\frac {\\mathrm {d} I}{\\mathrm {d} t} = - 5 I + 2 5.\n$$\n\n有解  $I(t) = 5 - c\\mathrm{e}^{-5t}$ , 其中  $c$  为任意常数. 因刚合上时  $I(0) = 0$  得  $c = 5$ , 解为  $I(t) = 5(1 - \\mathrm{e}^{-5t})$ .  $S_{1}$  合上  $10\\mathrm{s}$  后\n\n$$\nI (t) = 5 \\left(1 - e ^ {- 5 0}\\right) \\approx 5 A.\n$$",
-    "split_qa":"[\n  {\n    \"sub_id\": 1,\n    \"sub_question\": \"如图2.8所示的 RL 电路，试求：当开关 $S_{1}$ 合上 10 s 后，电感 $L$ 上的电流。 ![图2.8 RL电路](question_images\/04ce3abe2b816fcfa1f116c1a6459212ed270a74d803f31da9701038a969ef99.jpg)\",\n    \"sub_answer\": \"I(10 s) = 5(1 - e^{-50}) \\\\approx 5 A.\",\n    \"sub_solution\": \"解（1）设图2.8的电路上电流为  $I(t)$  ，当开关  $S_{1}$  合上时电路方程为\\n\\n$$\\n\\\\frac {\\\\mathrm {d} I}{\\\\mathrm {d} t} + \\\\frac {R _ {1}}{L} I = \\\\frac {E}{L}, \\\\text {即} \\\\frac {\\\\mathrm {d} I}{\\\\mathrm {d} t} = - 5 I + 2 5.\\n$$\\n\\n有解  $I(t) = 5 - c\\\\mathrm{e}^{-5t}$ , 其中  $c$  为任意常数. 因刚合上时  $I(0) = 0$  得  $c = 5$ , 解为  $I(t) = 5(1 - \\\\mathrm{e}^{-5t})$ .  $S_{1}$  合上  $10\\\\mathrm{s}$  后\\n\\n$$\\nI (t) = 5 \\\\left(1 - e ^ {- 5 0}\\\\right) \\\\approx 5 A.\\n$$\"\n  },\n  {\n    \"sub_id\": 2,\n    \"sub_question\": \"如图2.8所示的 RL 电路，试求：$S_{1}$ 合上 10 s 后再将 $S_{2}$ 合上，求 $S_{2}$ 合上 20 s 后电感 $L$ 上的电流。 ![图2.8 RL电路](question_images\/04ce3abe2b816fcfa1f116c1a6459212ed270a74d803f31da9701038a969ef99.jpg)\",\n    \"sub_answer\": \"I(20 s) = 7.5 - 2.5 e^{-66.6} \\\\approx 7.5 A.\",\n    \"sub_solution\": \"(2)  $S_{1}$  合上  $10\\\\mathrm{~s~}$  后再将  $S_{2}$  合上，令  $\\\\frac{1}{R} = \\\\frac{1}{R_1} +\\\\frac{1}{R_2} = \\\\frac{3}{20}$  此时电路方程变为  $\\\\frac{\\\\mathrm{d}I}{\\\\mathrm{d}t} = -\\\\frac{10}{3} I + 25.$  方程的解为  $I(t) = 7.5 + ce^{-{\\\\frac{10}{3}} t}.$  因\\n开始时  $I(0) = 5$  ，得解  $I(t) = 7.5 - 2.5\\\\mathrm{e}^{-\\\\frac{10}{3} t}$ .  $S_{2}$  合上  $20\\\\mathrm{s}$  后有  $I(t) = 7.5 - 2.5\\\\mathrm{e}^{-66.6} \\\\approx 7.5\\\\mathrm{A}$ .\"\n  }\n]",
-    "question_type":"{\n  \"type\": \"Calculation\",\n  \"reason\": \"The problem asks for the numeric\/symbolic value of the inductor current after 10 s in an RL transient circuit and the provided answer is a computed expression and numerical approximation.\"\n}",
-    "type":"Calculation",
-    "type_reason":"The problem asks for the numeric\/symbolic value of the inductor current after 10 s in an RL transient circuit and the provided answer is a computed expression and numerical approximation.",
-    "qa_judgement":"{\n  \"reason\": \"The item poses a clear calculational question (current in the inductor 10 s after closing the switch) and the provided numerical answer directly addresses that question. The image presumably supplies the circuit parameters needed, and a concise numeric result is acceptable for an exam-style problem.\",\n  \"judgement\": \"true\"\n}",
-    "filter_result":"true",
-    "filter_reason":"The item poses a clear calculational question (current in the inductor 10 s after closing the switch) and the provided numerical answer directly addresses that question. The image presumably supplies the circuit parameters needed, and a concise numeric result is acceptable for an exam-style problem.",
-    "image_basedir":"\/data1\/VQA_ready_data\/ode_2",
-    "subject":"ode_2",
-    "chapter_title":"第二章 一阶微分方程的初等解法",
-    "rollout_index":0,
-    "llm_answer":"Solution:\n1. Analyze circuit configuration when switch $S_1$ is closed:\n   → Switch $S_1$ closes the branch containing resistor $R_1 = 10\\,\\Omega$, while $S_2$ remains open.\n   → The inductor $L = 2\\,\\text{H}$ is in series with $R_1$ and the voltage source $E = 50\\,\\text{V}$.\n\n2. Determine time constant $\\tau$ of RL circuit:\n   → Time constant formula: $\\tau = \\frac{L}{R}$\n   → Total resistance in the loop: $R = R_1 = 10\\,\\Omega$\n   → $\\tau = \\frac{2\\,\\text{H}}{10\\,\\Omega} = 0.2\\,\\text{s}$\n\n3. Derive current expression for RL circuit after switch closure:\n   → Current in RL circuit grows exponentially: $i(t) = I_{\\\\text{final}} \\left(1 - e^{-t\/\\tau}\\right)$\n   → Steady-state final current: $I_{\\\\text{final}} = \\frac{E}{R} = \\frac{50\\,\\text{V}}{10\\,\\Omega} = 5\\,\\text{A}$\n\n4. Calculate current at $t = 10\\,\\text{s}$:\n   → Substitute into current equation: $i(10) = 5 \\left(1 - e^{-10\/0.2}\\right) = 5 \\left(1 - e^{-50}\\right)$\n   → Since $e^{-50}$ is extremely small ($≈ 1.93×10^{-22}$), we have:\n     $i(10) ≈ 5 \\times (1 - 0) = 5\\,\\text{A}$\n\nVerification:\n→ Check if 10s is much greater than $\\tau$: $t = 10\\,\\text{s} >> \\tau = 0.2\\,\\text{s}$, so exponential term decays nearly completely.\n→ Result confirms approach: current approaches steady state.\n\n$\\boxed{5}$",
-    "llm_short_answer":"Solution:\n1. Analyze circuit configuration when switch $S_1$ is closed:\n   → Switch $S_1$ closes the branch containing resistor $R_1 = 10\\,\\Omega$, while $S_2$ remains open.\n   → The inductor $L = 2\\,\\text{H}$ is in series with $R_1$ and the voltage source $E = 50\\,\\text{V}$.\n\n2. Determine time constant $\\tau$ of RL circuit:\n   → Time constant formula: $\\tau = \\frac{L}{R}$\n   → Total resistance in the loop: $R = R_1 = 10\\,\\Omega$\n   → $\\tau = \\frac{2\\,\\text{H}}{10\\,\\Omega} = 0.2\\,\\text{s}$\n\n3. Derive current expression for RL circuit after switch closure:\n   → Current in RL circuit grows exponentially: $i(t) = I_{\\\\text{final}} \\left(1 - e^{-t\/\\tau}\\right)$\n   → Steady-state final current: $I_{\\\\text{final}} = \\frac{E}{R} = \\frac{50\\,\\text{V}}{10\\,\\Omega} = 5\\,\\text{A}$\n\n4. Calculate current at $t = 10\\,\\text{s}$:\n   → Substitute into current equation: $i(10) = 5 \\left(1 - e^{-10\/0.2}\\right) = 5 \\left(1 - e^{-50}\\right)$\n   → Since $e^{-50}$ is extremely small ($≈ 1.93×10^{-22}$), we have:\n     $i(10) ≈ 5 \\times (1 - 0) = 5\\,\\text{A}$\n\nVerification:\n→ Check if 10s is much greater than $\\tau$: $t = 10\\,\\text{s} >> \\tau = 0.2\\,\\text{s}$, so exponential term decays nearly completely.\n→ Result confirms approach: current approaches steady state.\n\n$\\boxed{5}$",
-    "answer_match_result":true,
-    "correct_answer_num":1,
-    "total_subquestions":1,
-    "response_evaluation":"{\n  \"reason\": \"There is a single question (current at t = 10 s). The current answer gives the same expression I(10) = 5(1 - e^{-50}) and the same numerical conclusion ≈ 5 A as the reference. The time constant and final current used match the reference, and the approximation e^{-50} ≈ 0 is correctly applied. Therefore the answer is semantically consistent with the reference.\",\n  \"judgement\": [\"true\"]\n}",
-    "rollout_num":32,
-    "accuracy":1.0
-  }
-```
-
-## Evaluate
-这部分代码在`pipelines/vqa_evaluate.py`当中，逻辑与rollout基本一致。
-
-主函数不变，输入文件中，如果要根据accuracy进行难度分类，则要多一个`accuracy`项，比如可以直接用上面rollout出来的结果。
-
-代码分为4步：
-
-- 难度过滤：`self.difficulty_filter = GeneralFilter(filter_rules=[lambda df: df['accuracy'] <= 0.6])`，可以自己改。
-- llm 回答：同上
-- 清理llm answer中的thinking部分：同上
-- llm verify：同上
+然后根据`answer_match_result`的结果进行reject sampling，直到达到最大轮数或者不再有被reject的样本为止。最后会把curated的数据存入同一目录的`curated_vqa_with_cot.jsonl`当中。

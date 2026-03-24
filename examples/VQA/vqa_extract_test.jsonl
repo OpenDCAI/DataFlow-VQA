@@ -1,0 +1,2 @@
+{"input_pdf_paths": "./examples/VQA/questionextract_test.pdf", "name": "math1"}
+{"input_pdf_paths": ["./examples/VQA/math_question.pdf", "./examples/VQA/math_answer.pdf"], "name": "math2"}
