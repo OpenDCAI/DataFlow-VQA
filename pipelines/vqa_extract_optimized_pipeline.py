@@ -6,7 +6,7 @@ from operators.pdf2vqa import MinerU2LLMInputOperator, LLMOutputParser, QA_Merge
 from dataflow.operators.core_text import ChunkedPromptedGenerator
 
 from dataflow.pipeline import PipelineABC
-from dataflow.prompts.pdf2vqa import QAExtractPrompt
+from prompts.pdf2vqa import QAExtractPrompt
 
 from pypdf import PdfWriter
 
@@ -14,15 +14,9 @@ import os
 import json
 import re
 import argparse
-
-#######CONFIGS##########
-API_URL = "https://api.vectortara.com/v1/chat/completions"
-MODEL_NAME = "gemini-2.5-pro"
-MAX_WORKERS = 100
-########################
     
 class PDF_VQA_extract_optimized_pipeline(PipelineABC):
-    def __init__(self, input_file):
+    def __init__(self, input_file, api_url, model_name, max_workers=100):
         super().__init__()
         self.storage = FileStorage(
             first_entry_file_name=input_file,
@@ -30,12 +24,12 @@ class PDF_VQA_extract_optimized_pipeline(PipelineABC):
             file_name_prefix="vqa",
             cache_type="jsonl",
         )
-        
+
         self.llm_serving = APILLMServing_request(
-            api_url=API_URL,
+            api_url=f"{api_url}/chat/completions",
             key_name_of_api_key="DF_API_KEY",
-            model_name=MODEL_NAME,
-            max_workers=MAX_WORKERS,
+            model_name=model_name,
+            max_workers=max_workers,
         )
         
         self.vqa_extract_prompt = QAExtractPrompt()
@@ -95,29 +89,34 @@ class PDF_VQA_extract_optimized_pipeline(PipelineABC):
 
 
 if __name__ == "__main__":
-    #是用命令行读入输入文件，输出文件夹
     parser = argparse.ArgumentParser(description="Run PDF VQA Extract Optimized Pipeline")
     parser.add_argument("--input_file", type=str, default="./examples/VQA/vqa_extract_test.jsonl", help="Path to the input JSONL file")
     parser.add_argument("--output_dir", type=str, default="./output", help="Directory to save the output files")
+    parser.add_argument("--api_url", type=str, default="https://generativelanguage.googleapis.com/v1beta/openai/", help="Base URL of the OpenAI-compatible API (e.g. https://api.openai.com/v1)")
+    parser.add_argument("--model", type=str, default="gemini-2.5-pro", help="LLM model name to use for VQA extraction, please use powerful reasoning models")
+    parser.add_argument("--max_workers", type=int, default=100, help="Number of parallel API workers")
     args = parser.parse_args()
-    
-    
-    # jsonl中每一行包含input_pdf_path, name (math1, math2, physics1, chemistry1, ...)
-    # pipeline = PDF_VQA_extract_optimized_pipeline(input_file=args.input_file)
-    # pipeline.compile()
-    # pipeline.forward()
-    
+
+    pipeline = PDF_VQA_extract_optimized_pipeline(
+        input_file=args.input_file,
+        api_url=args.api_url,
+        model_name=args.model,
+        max_workers=args.max_workers,
+    )
+    pipeline.compile()
+    pipeline.forward()
+
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
-    # 首先找到cache中最大的一个vqa_step*.jsonl文件
+    # Find the latest cache step file
     cache_files = os.listdir("./cache")
     step_files = [f for f in cache_files if re.match(r"vqa_step\d+\.jsonl", f)]
     step_numbers = [int(re.findall(r"vqa_step(\d+)\.jsonl", f)[0]) for f in step_files]
     max_step = max(step_numbers)
     max_step_file = f"./cache/vqa_step{max_step}.jsonl"
-    
-    # 从这个文件中读取每一行，获取output_qa_item_key的内容，并保存到output_dir中的raw_vqa.jsonl文件中
+
+    # Extract QA items and save to output_dir/raw_vqa.jsonl
     output_qa_item_key = "vqa_pair"
     with open(max_step_file, "r") as f_in, open(os.path.join(output_dir, "raw_vqa.jsonl"), "w") as f_out:
         for line in f_in:
@@ -128,8 +127,8 @@ if __name__ == "__main__":
             if not output_data["solution"]:
                 output_data["solution"] = output_data["answer"]
             f_out.write(json.dumps(output_data, ensure_ascii=False) + "\n")
-            
-            # 把name对应的文件夹也复制过来
+
+            # Copy per-task image directory to output_dir
             src_dir = os.path.join("cache", name)
             if os.path.exists(src_dir):
                 os.system(f"cp -r {src_dir} {output_dir}")

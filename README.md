@@ -1,228 +1,297 @@
-## VQA Extraction
-在根目录下跑
-```bash
-python -m pipelines.vqa_extract_optimized_pipeline --input_file ./examples/VQA/vqa_extract_test.jsonl --output_dir ./output
+# DataFlow-VQA
+
+**[中文文档](README_zh.md)**
+
+A pipeline for extracting, curating, and generating chain-of-thought (CoT) data from PDF textbooks and exam papers.
+
+## Overview
+
+DataFlow-VQA processes PDF documents through three sequential stages:
+
+1. **VQA Extraction**: Parses PDFs using [MinerU](https://github.com/opendatalab/MinerU) for document layout analysis, then uses an LLM to extract structured question-answer pairs with images.
+2. **Data Curation**: Filters and cleans the extracted QA pairs — splits sub-questions, classifies question types, extracts concise answers, and removes low-quality items.
+3. **CoT Generation**: Generates chain-of-thought reasoning via reject sampling — an LLM generates answers, which are verified against ground truth, and incorrect ones are retried.
+
+## Installation
+
+This project is built on top of [DataFlow](https://github.com/OpenDCAI/DataFlow). Clone and install it first:
+
+```shell
+git clone https://github.com/OpenDCAI/DataFlow.git
+cd DataFlow
+pip install -e ".[pdf2vqa]"
 ```
-请先在代码中配置模型。并使用`export DF_API_KEY=your_api_key`的方式设置好环境变量。
-可以extract VQA，注意进入代码中按照要求准备好输入的jsonl文件！
-示例：
+
+Then clone this repository:
+
+```shell
+git clone <this-repo-url>
+cd DataFlow-VQA
 ```
+
+## Configuration
+
+### API Keys
+
+Two API keys are required:
+
+- `DF_API_KEY`: API key for the LLM service (OpenAI, Google Gemini, DeepSeek, etc.)
+- `MINERU_API_KEY`: API key for [MinerU](https://mineru.net/apiManage/token) document layout parsing
+
+```shell
+export DF_API_KEY="sk-xxxxx"
+export MINERU_API_KEY="sk2-xxxxx"
+```
+
+### LLM Endpoint
+
+Each pipeline accepts `--api_url` and `--model` arguments. Any [OpenAI-compatible API](https://platform.openai.com/docs/api-reference) endpoint is supported, including OpenAI, Google Gemini (via proxy), DeepSeek, and others.
+
+Provide the **base URL** without `/chat/completions` (e.g. `https://api.openai.com/v1`).
+
+---
+
+## Stage 1: VQA Extraction
+
+### Input Format
+
+Create a JSONL file where each line describes one PDF extraction task:
+
+```jsonl
 {"input_pdf_paths": "./examples/VQA/questionextract_test.pdf", "name": "math1"}
 {"input_pdf_paths": ["./examples/VQA/math_question.pdf", "./examples/VQA/math_answer.pdf"], "name": "math2"}
 ```
-其中`input_pdf_paths`可以是单个pdf文件，也可以是一个pdf文件列表（题目在前答案在后）。`name`是一个标识符。
 
-切割出的VQA会存到`output_dir`中的`raw_vqa.jsonl`中, 图片也保存在`output_dir`中，jsonl中的`image_basedir`项会指向图片的存储base路径。
+- `input_pdf_paths`: A single PDF (questions and answers interleaved) or a list of two or more PDFs (questions before answers).
+- `name`: A unique identifier for this task (used for directory naming and caching).
 
-## Data Curation
-```python
-python -m pipelines.curate_data --input_file ./output/raw_vqa.jsonl
+### Run
+
+```bash
+python -m pipelines.vqa_extract_optimized_pipeline \
+    --input_file ./examples/VQA/vqa_extract_test.jsonl \
+    --output_dir ./output \
+    --api_url https://generativelanguage.googleapis.com/v1beta/openai/ \
+    --model gemini-2.5-pro
 ```
-请先在代码中配置模型。并使用`export DF_API_KEY=your_api_key`的方式设置好环境变量。
-使用刚才extract出来的`raw_vqa.jsonl`作为输入文件，跑完之后会在同一目录下生成一个`curated_vqa.jsonl`，里面是经过过滤和清洗后的VQA数据，可以直接拿来做rollout了。
-这部分目前分为4个部分：[切小题](#切小题)，[判断题型](#判断题型)，[抽取答案](#抽取答案)，[题目过滤](#题目过滤)。
 
-### 切小题
-```python
-self.sub_qa_justify = PromptTemplatedGenerator(
-    llm_serving = self.llm_serving,
-    prompt_template = SubQuestionSplitingPrompt()
-)
-self.sub_qa_spliter = PandasOperator(
-    [split_generated_content]
-)
-```
-目前会把前后无*明显*依赖关系的问题切开，并配上相应的答案和解答过程。
+**Important:** We recommend using a strong powerful model here. Weak models like `gpt-5-mini` might perform bad.
 
-解答过程目前存在割裂的情况，是之后做dataset时需要进一步关注的点。
+### Output
 
-这一步的新增项：`split_qa`
+- `{output_dir}/raw_vqa.jsonl`: Extracted QA pairs with image references
+- `{output_dir}/{name}/vqa_images/`: Extracted images
+- `cache/{name}/extracted_vqa.jsonl`, `merged_qa_pairs.jsonl`, `merged_qa_pairs.md`: Per-task intermediate files
 
-输出示例
+Each QA item contains:
 
 ```json
 {
-    "question_chapter_title":"17Exercises",
-    "answer_chapter_title":"17Exercises",
-    "label":53,
-    "question":"53. Define  $T: \\mathbb{R}^2 \\to \\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . What are the fixed points of  $T$ ? In which quadrants of the  $xy$ -plane is  $T$  a contraction?",
-    "answer":"$(0,0),(1,1),(-1, - 1)$",
-    "solution":"53.  $(0,0),(1,1),(-1, - 1)$",
-    "split_qa":"[\n  {\n    \"sub_id\": 1,\n    \"sub_question\": \"Define  $T: \\\\mathbb{R}^2 \\\\to \\\\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . What are the fixed points of  $T$ ?\",\n    \"sub_answer\": \"$(0,0),(1,1),(-1, - 1)$\",\n    \"sub_solution\": \"53.  $(0,0),(1,1),(-1, - 1)$\"\n  },\n  {\n    \"sub_id\": 2,\n    \"sub_question\": \"Define  $T: \\\\mathbb{R}^2 \\\\to \\\\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . In which quadrants of the  $xy$ -plane is  $T$  a contraction?\",\n    \"sub_answer\": \"\",\n    \"sub_solution\": \"\"\n  }\n]"
-  },
+  "question": "Compute $x$ such that $x^2 - 1 = 0$.",
+  "answer": "$x = 1$ or $x = -1$",
+  "solution": "Factor as $(x-1)(x+1)=0$.",
+  "label": 1,
+  "chapter_title": "Chapter 1: Quadratic Equations"
+}
 ```
 
-此后，`split_generated_content`会把小题提取出来，并自动过滤掉question为空，或者answer与solution均为空的项。
+### Note
 
-例如：
+**We also support using a local MinerU deployment**: Replace `FileOrURLToMarkdownConverterAPI` with `FileOrURLToMarkdownConverterLocal` or `FileOrURLToMarkdownConverterFlash` in `pipelines/vqa_extract_optimized_pipeline.py`:
+
+```python
+# Original opendatalab local version
+self.mineru_executor = FileOrURLToMarkdownConverterLocal(
+    intermediate_dir="intermediate",
+    mineru_model_path="path/to/mineru/model",
+)
+
+# Accelerated version (Flash)
+self.mineru_executor = FileOrURLToMarkdownConverterFlash(
+    intermediate_dir="intermediate",
+    mineru_model_path="path/to/mineru/model",
+    batch_size=4,
+    replicas=1,
+    num_gpus_per_replica=1,
+    engine_gpu_util_rate_to_ray_cap=0.9,
+)
+```
+
+See [DataFlow's MinerU operators](https://github.com/OpenDCAI/DataFlow/blob/main/dataflow/operators/knowledge_cleaning/generate/mineru_operators.py) for full parameter documentation.
+
+<details>
+<summary>Pipeline details</summary>
+
+The extraction pipeline runs six steps:
+
+1. **PDF Merging** (`PDF_Merger`): If multiple PDFs are provided, merges them into one.
+2. **Document Layout Parsing** (`FileOrURLToMarkdownConverterAPI`): Calls the MinerU API to produce structured JSON layout tokens and page images.
+3. **Layout Preprocessing** (`MinerU2LLMInputOperator`): Flattens list items and re-indexes IDs to prepare LLM-ready input.
+4. **LLM Extraction** (`ChunkedPromptedGenerator`): Chunks the layout JSON (max 128k tokens per chunk) and calls the LLM with `QAExtractPrompt` to extract QA pairs as structured XML.
+5. **Output Parsing** (`LLMOutputParser`): Parses the XML response into JSONL and copies images to `vqa_images/`.
+6. **QA Merging** (`QA_Merger`): For separated question/answer PDFs, matches question and answer blocks by chapter title and question number.
+
+</details>
+
+---
+
+## Stage 2: Data Curation
+
+```bash
+python -m pipelines.curate_data \
+    --input_file ./output/raw_vqa.jsonl \
+    --api_url https://api.openai.com/v1 \
+    --model gpt-5-mini
+```
+
+Output is saved as `curated_vqa.jsonl` in the same directory as `--input_file`.
+
+<details>
+<summary>Pipeline details</summary>
+
+Four sequential steps:
+
+**1. Sub-question Splitting**
+
+Questions with multiple independent parts (e.g. (a), (b), (c)) are split into separate items. Each sub-question is paired with its corresponding sub-answer and sub-solution. Items where the question or both answer and solution are empty are discarded.
+
+Sub-questions that are context-sensitive (e.g. (b) uses the result of (a)) will not be split into separate items.
+
+Adds field: `split_qa`
+
+**2. Question Type Classification**
+
+Each question is classified as one of: `Calculation`, `Proof`, `Explanation`, `Fill-in`, `Multiple-choice`, `Sketching`, `Other`.
+
+By default, only `Calculation`, `Fill-in`, and `Multiple-choice` are retained. To change this, edit the `filter_rules` list in `DataCurationPipeline.__init__`.
+
+Adds fields: `type`, `type_reason`
+
+**3. Answer Extraction**
+
+Extracts a concise final answer from the `solution` field and writes it to `answer`. Items that already have a non-empty `answer` are skipped (set `overwrite=True` in `AnswerExtractionOperator` to override).
+
+**4. QA Filtering**
+
+Removes items based on the following criteria:
+
+- The question must pose a clear, specific problem suitable for an exam. Examples, statements without questions, and open-ended discussions are rejected.
+- The answer must directly address the question.
+- The question and answer must be self-contained, without relying on external references or omitted context.
+
+Adds fields: `filter_result`, `filter_reason`
+
+</details>
+
+---
+
+## Stage 3: Generate CoT
+
+The answer model and judge model can use different API endpoints and API keys, which is useful when the answer model is a self-hosted open-source VLM (e.g. Qwen3-VL served via vLLM) and the judge model is a commercial API.
+
+Use `--answer_api_key_env` / `--judge_api_key_env` to specify which environment variable holds the API key for each model (default: `DF_API_KEY` for both).
+
+```bash
+# Example: self-hosted Qwen3-VL for answers, OpenAI for judging
+export VLLM_API_KEY="token-xxxx"   # or leave empty if your vLLM server needs no key
+export DF_API_KEY="sk-xxxx"
+
+python -m pipelines.generate_cot \
+    --input_file ./output/curated_vqa.jsonl \
+    --max_retries 5 \
+    --answer_api_url https://your-vllm-server/v1 \
+    --answer_model qwen3-vl-235b-thinking \
+    --answer_api_key_env VLLM_API_KEY \
+    --judge_api_url https://api.openai.com/v1 \
+    --judge_model gpt-5-mini \
+    --judge_api_key_env DF_API_KEY
+```
+
+Output is saved as `curated_vqa_with_cot.jsonl` in the same directory as `--input_file`.
+
+<details>
+<summary>Pipeline details</summary>
+
+Uses reject sampling over up to `max_retries` rounds:
+
+**1. Answer Generation** (`VQAReasoningAnswerGenerator`)
+
+The LLM generates a step-by-step answer. Set `skip_text_only=True` in `RejectSamplingPipeline` to process only VQA items (questions containing images); set to `False` to process all items. Generated answer stored in `generated_cot`.
+
+**2. Thinking Cleanup**
+
+Strips `<think>...</think>` content from the generated answer to reduce verification cost. The cleaned answer is stored in `llm_short_answer`. Assumes the model outputs `<think>THINK</think>ANSWER` or `THINK</think>ANSWER`.
+
+**3. Answer Verification** (`BenchDatasetEvaluatorQuestion`)
+
+Compares `llm_short_answer` against the ground truth `answer` using semantic LLM evaluation (with 5% numerical tolerance). Items that pass are marked `answer_match_result = True` and skipped in subsequent rounds.
+
+Set `support_subquestions=True` to evaluate each sub-question independently; `answer_match_result` is `False` if any sub-question is wrong.
+
+Evaluation statistics (overall accuracy, sub-question accuracy) are saved to `./cot_cache/eval_results.jsonl`:
 
 ```json
 {
-    "question_chapter_title":"17Exercises",
-    "answer_chapter_title":"17Exercises",
-    "label":53,
-    "question":"Define  $T: \\mathbb{R}^2 \\to \\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . What are the fixed points of  $T$ ?",
-    "answer":"$(0,0),(1,1),(-1, - 1)$",
-    "solution":"53.  $(0,0),(1,1),(-1, - 1)$",
-    "split_qa":"[\n  {\n    \"sub_id\": 1,\n    \"sub_question\": \"Define  $T: \\\\mathbb{R}^2 \\\\to \\\\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . What are the fixed points of  $T$ ?\",\n    \"sub_answer\": \"$(0,0),(1,1),(-1, - 1)$\",\n    \"sub_solution\": \"53.  $(0,0),(1,1),(-1, - 1)$\"\n  },\n  {\n    \"sub_id\": 2,\n    \"sub_question\": \"Define  $T: \\\\mathbb{R}^2 \\\\to \\\\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . In which quadrants of the  $xy$ -plane is  $T$  a contraction?\",\n    \"sub_answer\": \"\",\n    \"sub_solution\": \"\"\n  }\n]"
-  },
+  "total_samples": 23584,
+  "matched_samples": 12281,
+  "accuracy": 0.521,
+  "total_subquestions": 26380,
+  "correct_subquestions": 13807,
+  "subquestion_accuracy": 0.523
+}
 ```
 
-### 判断题型
-```python
-self.type_filter = PromptTemplatedGenerator(
-      llm_serving = self.llm_serving,
-      prompt_template = BenchSamplingPrompt()
-  )
-  self.type_filter_processor = PandasOperator(
-      [extract_type_and_reason]
-  )
-  self.type_filter_executor = GeneralFilter(
-      filter_rules=[lambda df: df['type'].isin(["Calculation", "Fill-in", "Multiple-choice"])]
-  )
+</details>
+
+---
+
+## Examples
+
+Sample PDFs and input JSONL are provided in `examples/VQA/`:
+
+```
+examples/VQA/
+├── vqa_extract_test.jsonl    # Example input for Stage 1
+├── questionextract_test.pdf  # Single PDF with interleaved Q&A
+├── math_question.pdf         # Questions PDF (for separated Q&A demo)
+└── math_answer.pdf           # Answers PDF (for separated Q&A demo)
 ```
 
-这一步会判断题型（Calculation | Proof | Explanation | Fill-in | Multiple-choice | Sketching/Plotting | Other），然后只保留`filter_rules`中规定的种类（可以自行修改）。
+To run the full pipeline on the examples:
 
-这一步新增的项是`type`和`type_reason`.
+```bash
+# Stage 1: Extract
+python -m pipelines.vqa_extract_optimized_pipeline \
+    --input_file ./examples/VQA/vqa_extract_test.jsonl \
+    --output_dir ./output \
+    --api_url https://generativelanguage.googleapis.com/v1beta/openai/ \
+    --model gemini-2.5-pro
 
-输出示例
-```json
-{
-    "question_chapter_title":"17Exercises",
-    "answer_chapter_title":"17Exercises",
-    "label":53,
-    "question":"Define  $T: \\mathbb{R}^2 \\to \\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . What are the fixed points of  $T$ ?",
-    "answer":"$(0,0),(1,1),(-1, - 1)$",
-    "solution":"53.  $(0,0),(1,1),(-1, - 1)$",
-    "split_qa":"[\n  {\n    \"sub_id\": 1,\n    \"sub_question\": \"Define  $T: \\\\mathbb{R}^2 \\\\to \\\\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . What are the fixed points of  $T$ ?\",\n    \"sub_answer\": \"$(0,0),(1,1),(-1, - 1)$\",\n    \"sub_solution\": \"53.  $(0,0),(1,1),(-1, - 1)$\"\n  },\n  {\n    \"sub_id\": 2,\n    \"sub_question\": \"Define  $T: \\\\mathbb{R}^2 \\\\to \\\\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . In which quadrants of the  $xy$ -plane is  $T$  a contraction?\",\n    \"sub_answer\": \"\",\n    \"sub_solution\": \"\"\n  }\n]",
-    "question_type":"{\n  \"type\": \"Calculation\",\n  \"reason\": \"Finding fixed points requires solving the system (x,y) = (y^{1\/3}, x^{1\/3}), i.e. straightforward algebraic computation to determine the solutions.\"\n}",
-    "type":"Calculation",
-    "type_reason":"Finding fixed points requires solving the system (x,y) = (y^{1\/3}, x^{1\/3}), i.e. straightforward algebraic computation to determine the solutions."
-  },
+# Stage 2: Curate
+python -m pipelines.curate_data \
+    --input_file ./output/raw_vqa.jsonl \
+    --api_url https://api.openai.com/v1 \
+    --model gpt-5-mini
+
+# Stage 3: Generate CoT
+# Example: self-hosted Qwen3-VL for answers, OpenAI for judging
+export VLLM_API_KEY="token-xxxx"   # or leave empty if your vLLM server needs no key
+export DF_API_KEY="sk-xxxx"
+
+python -m pipelines.generate_cot \
+    --input_file ./output/curated_vqa.jsonl \
+    --max_retries 5 \
+    --answer_api_url https://your-vllm-server/v1 \
+    --answer_model qwen3-vl-235b-thinking \
+    --answer_api_key_env VLLM_API_KEY \
+    --judge_api_url https://api.openai.com/v1 \
+    --judge_model gpt-5-mini \
+    --judge_api_key_env DF_API_KEY
 ```
 
-### 抽取答案
-```python
-self.answer_extractor = AnswerExtractionOperator(
-    llm_serving=self.llm_serving,
-    overwrite=False
-)
-```
-这一步会把solution中的answer提取出来，直接写入answer项。`overwrite=True`会对answer已经存在的项进行操作，`overwrite=False`则会跳过这些项。
+## Note
+The implementation in this repository is only for running a demo at small scale. If you wish to run the pipeline on large number of books, you will probably need features [Checkpoint Resume](https://opendcai.github.io/DataFlow-Doc/en/guide/resume/) and [Batched Inference](https://opendcai.github.io/DataFlow-Doc/en/guide/batch/).
 
-这一步没有新增的项。
+## License
 
-### 题目过滤
-```python
-self.qa_filter = PromptTemplatedGenerator(
-    llm_serving = self.llm_serving,
-    prompt_template = QAFilterPrompt()
-)
-self.qa_filter_processor = PandasOperator(
-    [extract_filter_result_and_reason]
-)
-self.qa_filter_executor = GeneralFilter(
-    filter_rules=[lambda df: df['filter_result'] == 'true']
-)
-```
-
-这一步会过滤掉不是问题的内容（也包括示例、开放性问题）、问题或答案依赖外部文本、问题和答案看起来不配对的pair。
-
-目前的prompt：
-```txt
-[Criteria]
-1. The question must be suitable for an exam setting, meaning it should raise a clear problem that requires a specific solution.
-    Examples, statements without questions, open-ended discussions and other context that do not pose a clear problem are not suitable.
-    Questions like "Give an example of..." that can have many valid answers are also not suitable.
-2. Relevance: The answer must directly address the question asked.
-    If the answer seems to be addressing a different question and is wrongly paired with the given question, it is not suitable.
-3. Completeness and Self-Containment: The question and answer should be complete and self-contained, providing all necessary information for understanding and solving it without requiring external context.
-   Questions that rely heavily on prior context or external references are not suitable.
-   Answers such as "Refer to theorem X", "Corollary of previous result", "Answered in the text above", "Omitted for brevity" are not acceptable.
-   Incomplete questions or answers that leave out critical information are also not suitable.
-   
-[Important Notice]
-1. You do not need to evaluate the correctness of the answer, only whether it is appropriate and complete in relation to the question.
-2. Short answer with no explanation (calculation, proof, counterexample, ...) is acceptable as long as it directly addresses the question.
-```
-
-这一步新增的项是`filter_result`和`filter_reason`.
-
-输出示例
-```json
-{
-    "question_chapter_title":"17Exercises",
-    "answer_chapter_title":"17Exercises",
-    "label":53,
-    "question":"Define  $T: \\mathbb{R}^2 \\to \\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . What are the fixed points of  $T$ ?",
-    "answer":"$(0,0),(1,1),(-1, - 1)$",
-    "solution":"53.  $(0,0),(1,1),(-1, - 1)$",
-    "split_qa":"[\n  {\n    \"sub_id\": 1,\n    \"sub_question\": \"Define  $T: \\\\mathbb{R}^2 \\\\to \\\\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . What are the fixed points of  $T$ ?\",\n    \"sub_answer\": \"$(0,0),(1,1),(-1, - 1)$\",\n    \"sub_solution\": \"53.  $(0,0),(1,1),(-1, - 1)$\"\n  },\n  {\n    \"sub_id\": 2,\n    \"sub_question\": \"Define  $T: \\\\mathbb{R}^2 \\\\to \\\\mathbb{R}^2$  by  $T(x, y) = (y^{1\/3}, x^{1\/3})$ . In which quadrants of the  $xy$ -plane is  $T$  a contraction?\",\n    \"sub_answer\": \"\",\n    \"sub_solution\": \"\"\n  }\n]",
-    "question_type":"{\n  \"type\": \"Calculation\",\n  \"reason\": \"Finding fixed points requires solving the system (x,y) = (y^{1\/3}, x^{1\/3}), i.e. straightforward algebraic computation to determine the solutions.\"\n}",
-    "type":"Calculation",
-    "type_reason":"Finding fixed points requires solving the system (x,y) = (y^{1\/3}, x^{1\/3}), i.e. straightforward algebraic computation to determine the solutions.",
-    "qa_judgement":"{\n  \"reason\": \"The question poses a clear, specific problem suitable for an exam (find fixed points of a given map). The provided answer directly addresses that question with a complete list of fixed points and is self-contained.\",\n  \"judgement\": \"true\"\n}",
-    "filter_result":"true",
-    "filter_reason":"The question poses a clear, specific problem suitable for an exam (find fixed points of a given map). The provided answer directly addresses that question with a complete list of fixed points and is self-contained."
-  }
-```
-
-## Generate COT
-请先在代码中配置模型。并使用`export DF_API_KEY=your_api_key`的方式设置好环境变量。
-```python
-python -m pipelines.generate_cot --input_file ./output/curated_vqa.jsonl --max_retries 5
-```
-
-这部分分为3步：
-
-- llm 回答:
-  ```python
-  self.answer_generator = VQAReasoningAnswerGenerator(
-      llm_serving=self.llm_answer_serving,
-      prompt_template=MathAnswerGeneratorPrompt(),
-      skip_text_only=True,
-  )
-  ```
-  设置`skip_text_only=True`会跳过非VQA（问题中没有图片），`skip_text_only=False`则会跑所有的题目。
-
-  llm的回答会存入`llm_answer`当中。 
-- 清理llm answer中的thinking部分. `self.think_cleaner = PandasOperator(process_fn=[ make_remove_think_fn() ])`
-
-  为了节省verify成本，这个算子可以把模型回答中第一个`</think>`前面的内容删掉。这里假设输出为`THINK</think>ANSWER`，没有前导的`<think>`。这部分逻辑也可以自己修改。
-
-  清理后的回答会存入`llm_short_answer`当中。
-- llm verify：
-```python
-self.answer_groundtruth_filter = BenchDatasetEvaluatorQuestion(
-  compare_method="semantic",
-  llm_serving=self.llm_serving,
-  prompt_template=None, # using default prompt
-  eval_result_path=eval_result_path,
-  support_subquestions=True
-)
-```
-
-这里设置`support_subquestions=True`会自动识别问题中的小题，并分别判断是否答对。否则会把整道题当做一个整体来看。
-
-这一步如果没有识别小题，会得到`answer_match_result`一项；识别小题就还会得到 `correct_answer_num`, `total_subquestions`两项。注意识别小题时，只要有一道小题做错，`answer_match_result`就会是false。
-
-`eval_result_path`会存入整体的正确率等信息（大题正确率，小题正确率），例如：
-```json
-[
-  {
-    "bench_name_or_prefix":"math-Qwen3-8B-Instruct",
-    "total_samples":23584,
-    "valid_samples":23571,
-    "matched_samples":12281,
-    "accuracy":0.5210215943,
-    "empty_responses_count":13,
-    "compare_method":"semantic",
-    "total_subquestions":26380,
-    "correct_subquestions":13807,
-    "subquestion_accuracy":0.523388931
-  }
-]
-```
-
-然后根据`answer_match_result`的结果进行reject sampling，直到达到最大轮数或者不再有被reject的样本为止。最后会把curated的数据存入同一目录的`curated_vqa_with_cot.jsonl`当中。
+This project is licensed under the [Apache License 2.0](LICENSE).

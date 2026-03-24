@@ -26,15 +26,9 @@ import argparse
 import re
 import shutil
 
-#######CONFIGS##########
-API_URL = "https://api.vectortara.com/v1/chat/completions"
-MODEL_NAME = "gpt-5-mini"
-CLEAN_MODEL_NAME = "deepseek-v3-2-251201"
-MAX_WORKERS = 100
-########################
 
 class DataCurationPipeline(PipelineABC):
-    def __init__(self, input_file):
+    def __init__(self, input_file, api_url, model_name, max_workers=100):
         super().__init__()
         self.storage = FileStorage(
             first_entry_file_name=input_file,
@@ -44,18 +38,11 @@ class DataCurationPipeline(PipelineABC):
         )
 
         self.llm_serving = APILLMServing_request(
-                api_url=API_URL,
-                model_name=MODEL_NAME,
-                max_workers=100,
+                api_url=f"{api_url}/chat/completions",
+                model_name=model_name,
+                max_workers=max_workers,
         )
 
-        self.llm_clean_serving = APILLMServing_request(
-                api_url=API_URL,
-                model_name=CLEAN_MODEL_NAME,
-                max_workers=MAX_WORKERS,
-        )
-
-        # 拆小题
         self.sub_qa_justify = FormatStrPromptedGenerator(
             llm_serving = self.llm_serving,
             prompt_template = SubQuestionSplitingPrompt()
@@ -64,13 +51,13 @@ class DataCurationPipeline(PipelineABC):
             [split_generated_content]
         )
         
-        # 抽取答案
+        # Extract concise answers from solutions
         self.answer_extractor = AnswerExtractionOperator(
             llm_serving=self.llm_serving,
             overwrite=False
         )
         
-        # 判断题型
+        # Classify question types
         self.type_filter = FormatStrPromptedGenerator(
             llm_serving = self.llm_serving,
             prompt_template = TypeClassifyPrompt()
@@ -87,8 +74,7 @@ class DataCurationPipeline(PipelineABC):
             prompt_template=AddMissingBlankPrompt()
         )
         
-        # answer + 题目过滤：题目或answer有那种根据lemma x.x的不具体描述、答案不完整这种、"Give an example"这种可以给无穷多答案的问题
-        
+        # Filter items with unverifiable or poorly paired QA
         self.qa_filter = FormatStrPromptedGenerator(
             llm_serving = self.llm_serving,
             prompt_template = QAFilterPrompt()
@@ -102,7 +88,7 @@ class DataCurationPipeline(PipelineABC):
 
         # question和answer的非内容型过滤
         self.text_cleaner = LLMTextCleanerOperator(
-            llm_serving=self.llm_serving,           # gpt-5-mini 效果不好可以换成 llm_clean_serving
+            llm_serving=self.llm_serving,
             prompt_template=TextCleaningPrompt()
         )
         
@@ -260,22 +246,25 @@ def extract_filter_result_and_reason(df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Data Curation Pipeline")
-    parser.add_argument("--input_file", type=str, required=True, help="Path to the input JSONL file")
+    parser.add_argument("--input_file", type=str, required=True, help="Path to the input JSONL file (raw_vqa.jsonl)")
+    parser.add_argument("--api_url", type=str, default="https://api.openai.com/v1", help="Base URL of the OpenAI-compatible API (e.g. https://api.openai.com/v1)")
+    parser.add_argument("--model", type=str, default="gpt-5-mini", help="LLM model name to use for curation")
+    parser.add_argument("--max_workers", type=int, default=100, help="Number of parallel API workers")
     args = parser.parse_args()
-    
-    model = DataCurationPipeline(args.input_file)
+
+    model = DataCurationPipeline(args.input_file, api_url=args.api_url, model_name=args.model, max_workers=args.max_workers)
     model.compile()
     model.forward()
     
-    # 首先找到cache中最大的一个curate_data_step*.jsonl文件
+    # Find the latest curate_data cache step file
     cache_files = os.listdir("./cache")
     step_files = [f for f in cache_files if re.match(r"curate_data_step\d+\.jsonl", f)]
     step_numbers = [int(re.findall(r"curate_data_step(\d+)\.jsonl", f)[0]) for f in step_files]
     max_step = max(step_numbers)
     max_step_file = f"./cache/curate_data_step{max_step}.jsonl"
     
-    # 将该文件复制到output目录下,并命名为curated_data.jsonl
-    # output目录应当与input_file同级，否则图片路径会有问题
+    # Copy final step file to output directory as curated_vqa.jsonl
+    # Output is placed alongside input_file so relative image paths remain valid
     output_dir = os.path.dirname(args.input_file)
     output_file = os.path.join(output_dir, "curated_vqa.jsonl")
     shutil.copy(max_step_file, output_file)

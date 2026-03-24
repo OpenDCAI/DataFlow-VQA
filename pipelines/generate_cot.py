@@ -22,13 +22,6 @@ import re
 import argparse
 import shutil
 
-#######CONFIGS##########
-ANSWER_API_URL = "https://api.vectortara.com/v1"
-ANSWER_MODEL_NAME = "gpt-5-mini"
-JUDGE_API_URL = "https://api.vectortara.com/v1/chat/completions"
-JUDGE_MODEL_NAME = "gpt-5-mini"
-MAX_WORKERS = 100
-########################
 
 def make_remove_think_fn(input_key, output_key):
     pattern = re.compile(r'<think>.*?</think>', flags=re.DOTALL | re.IGNORECASE)
@@ -50,7 +43,9 @@ def make_remove_think_fn(input_key, output_key):
     return fn
 
 class RejectSamplingPipeline(PipelineABC):
-    def __init__(self, first_entry_file_name, max_retries=5):
+    def __init__(self, first_entry_file_name, answer_api_url, judge_api_url, answer_model, judge_model,
+                 answer_api_key_env="DF_API_KEY", judge_api_key_env="DF_API_KEY",
+                 max_retries=5, max_workers=100):
         super().__init__()
         self.storage = FileStorage(
             first_entry_file_name=first_entry_file_name,
@@ -58,32 +53,34 @@ class RejectSamplingPipeline(PipelineABC):
             file_name_prefix="reject_sampling",
             cache_type="jsonl",
         )
-        
+
         self.max_retries = max_retries
         self.logger = get_logger()
 
         self.llm_answer_serving = APIVLMServing_openai(
-                api_url=ANSWER_API_URL,
-                model_name=ANSWER_MODEL_NAME,
-                max_workers=MAX_WORKERS,
+                api_url=answer_api_url,
+                model_name=answer_model,
+                key_name_of_api_key=answer_api_key_env,
+                max_workers=max_workers,
                 timeout=600.0,
                 max_tokens=8192,
                 temperature=0.7,
         )
-        
+
         self.llm_serving = APILLMServing_request(
-                api_url=JUDGE_API_URL,
-                model_name=JUDGE_MODEL_NAME,
-                max_workers=100,
+                api_url=f"{judge_api_url}/chat/completions",
+                model_name=judge_model,
+                key_name_of_api_key=judge_api_key_env,
+                max_workers=max_workers,
                 read_timeout=300.0
         )
         
-        # 难度过滤
+        # Difficulty filter (keep items where accuracy <= 1.0)
         self.difficulty_filter = GeneralFilter(
             filter_rules=[lambda df: df['accuracy'] <= 1.0]
         )
         
-        #llm 回答
+        # LLM answer generation
         self.answer_generator = VQAReasoningAnswerGenerator(
             llm_serving=self.llm_answer_serving,
             prompt_template=MathAnswerGeneratorPrompt(),
@@ -94,7 +91,7 @@ class RejectSamplingPipeline(PipelineABC):
         
         self.noop = PandasOperator(process_fn=[ lambda df: df ])
         
-        ## llm核对
+        # LLM verification
         self.answer_groundtruth_filter = BenchDatasetEvaluatorQuestion(
             compare_method="semantic",
             llm_serving=self.llm_serving,
@@ -105,12 +102,12 @@ class RejectSamplingPipeline(PipelineABC):
         )
         
     def forward(self):
-        self.noop.run(storage = self.storage.step(), output_key="answer_match_result") # for pipeline compliation, do nothing
+        self.noop.run(storage = self.storage.step(), output_key="answer_match_result") # for pipeline compilation, do nothing
         for i in range(self.max_retries):
-        
+
             input_skip_key="answer_match_result" if i > 0 else None
-            
-            # llm回答（跳过已经做对的题）
+
+            # Generate answers (skip items already answered correctly)
             self.answer_generator.run(
                 storage = self.storage.step(),
                 input_key = "question", 
@@ -118,7 +115,6 @@ class RejectSamplingPipeline(PipelineABC):
                 input_skip_key=input_skip_key,
                 input_image_basedir_key="image_basedir",
             )
-            
 
             self.think_cleaner.run(storage = self.storage.step(), output_key="llm_short_answer")
 
@@ -130,28 +126,40 @@ class RejectSamplingPipeline(PipelineABC):
             )
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Data Curation Pipeline")
-    parser.add_argument("--input_file", type=str, required=True, help="Path to the input JSONL file")
+    parser = argparse.ArgumentParser(description="CoT Generation Pipeline with Reject Sampling")
+    parser.add_argument("--input_file", type=str, required=True, help="Path to the input JSONL file (curated_vqa.jsonl)")
     parser.add_argument("--max_retries", type=int, default=5, help="Maximum number of reject sampling rounds")
+    parser.add_argument("--answer_api_url", type=str, default="https://api.xxx.com/v1", help="Url where you serve your qwen model (e.g. via vllm)")
+    parser.add_argument("--judge_api_url", type=str, default="https://api.openai.com/v1", help="Base URL of the OpenAI-compatible API for answer verification (e.g. https://api.openai.com/v1)")
+    parser.add_argument("--answer_model", type=str, default="qwen3-vl-235b-thinking", help="Model to use for answer generation")
+    parser.add_argument("--judge_model", type=str, default="gpt-5-mini", help="Model to use for answer verification")
+    parser.add_argument("--answer_api_key_env", type=str, default="DF_API_KEY", help="Environment variable name holding the API key for the answer model")
+    parser.add_argument("--judge_api_key_env", type=str, default="DF_API_KEY", help="Environment variable name holding the API key for the judge model")
+    parser.add_argument("--max_workers", type=int, default=100, help="Number of parallel API workers")
     args = parser.parse_args()
-    
-    
-    first_entry_file_name=args.input_file
-    max_retries = args.max_retries
-    
-    model = RejectSamplingPipeline(args.input_file, args.max_retries)
+
+    model = RejectSamplingPipeline(
+        args.input_file,
+        answer_api_url=args.answer_api_url,
+        judge_api_url=args.judge_api_url,
+        answer_model=args.answer_model,
+        judge_model=args.judge_model,
+        answer_api_key_env=args.answer_api_key_env,
+        judge_api_key_env=args.judge_api_key_env,
+        max_retries=args.max_retries,
+        max_workers=args.max_workers,
+    )
     model.compile()
     model.forward()
-    
-    # 首先找到cache中最大的一个reject_sampling_data_step*.jsonl文件
+
+    # Find the latest reject_sampling cache step file
     cache_files = os.listdir("./cot_cache")
     step_files = [f for f in cache_files if re.match(r"reject_sampling_step\d+\.jsonl", f)]
     step_numbers = [int(re.findall(r"reject_sampling_step(\d+)\.jsonl", f)[0]) for f in step_files]
     max_step = max(step_numbers)
     max_step_file = f"./cot_cache/reject_sampling_step{max_step}.jsonl"
-    
-    # 将该文件复制到output目录下,并命名为curated_data.jsonl
-    # output目录应当与input_file同级，否则图片路径会有问题
+
+    # Copy output alongside input_file so relative image paths remain valid
     output_dir = os.path.dirname(args.input_file)
     output_file = os.path.join(output_dir, "curated_vqa_with_cot.jsonl")
     shutil.copy(max_step_file, output_file)
