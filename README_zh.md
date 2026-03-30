@@ -2,6 +2,8 @@
 
 从 PDF 教材和试卷中提取、清洗、生成思维链（CoT）数据的流水线工具。
 
+[🤗数据集](https://huggingface.co/datasets/OpenDCAI/FlipVQA)
+
 ## 概览
 
 DataFlow-VQA 通过三个顺序阶段处理 PDF 文件：

@@ -4,6 +4,8 @@
 
 A pipeline for extracting, curating, and generating chain-of-thought (CoT) data from PDF textbooks and exam papers.
 
+[🤗Dataset](https://huggingface.co/datasets/OpenDCAI/FlipVQA)
+
 ## Overview
 
 DataFlow-VQA processes PDF documents through three sequential stages:
