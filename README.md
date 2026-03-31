@@ -7,12 +7,14 @@ A pipeline for extracting, curating, and generating chain-of-thought (CoT) data 
 [🤗Dataset](https://huggingface.co/datasets/OpenDCAI/FlipVQA)
 
 ## Overview
-
+![DataFlow-VQA overview](static/overview_2.png)
 DataFlow-VQA processes PDF documents through three sequential stages:
 
-1. **VQA Extraction**: Parses PDFs using [MinerU](https://github.com/opendatalab/MinerU) for document layout analysis, then uses an LLM to extract structured question-answer pairs with images.
-2. **Data Curation**: Filters and cleans the extracted QA pairs — splits sub-questions, classifies question types, extracts concise answers, and removes low-quality items.
-3. **CoT Generation**: Generates chain-of-thought reasoning via reject sampling — an LLM generates answers, which are verified against ground truth, and incorrect ones are retried.
+- Stage1 (**Section 3.1: VQA Extraction**): Parses PDFs using [MinerU](https://github.com/opendatalab/MinerU) for document layout analysis, then uses an LLM to extract structured question-answer pairs with images.
+- Stage2 (**Section 3.2.1 to Section 3.2.5: Data Curation**): Filters and cleans the extracted QA pairs — splits sub-questions, classifies question types, extracts concise answers, and removes low-quality items.
+- Stage3 (**Section 3.2.6: CoT Generation**): Generates chain-of-thought reasoning via reject sampling — an LLM generates answers, which are verified against ground truth, and incorrect ones are retried.
+
+
 
 ## Installation
 

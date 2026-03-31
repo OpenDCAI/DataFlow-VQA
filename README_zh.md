@@ -7,10 +7,12 @@
 ## 概览
 
 DataFlow-VQA 通过三个顺序阶段处理 PDF 文件：
+![DataFlow-VQA overview](static/overview_2.png)
+- 第一步（**Section 3.1：VQA 抽取**）：使用 [MinerU](https://github.com/opendatalab/MinerU) 进行文档版面分析，再用 LLM 从中抽取带图片的结构化问答对。
+- 第二步（**Section 3.2.1 到 Section 3.2.5：数据清洗**）：对抽取到的问答对进行过滤和清洗——拆分小题、判断题型、抽取简洁答案、去除低质量内容。
+- 第三步（**Section 3.2.6：生成 CoT**）：通过 Reject Sampling 生成思维链——LLM 生成回答，与标准答案核对，答错的重新生成。
 
-1. **VQA 抽取**：使用 [MinerU](https://github.com/opendatalab/MinerU) 进行文档版面分析，再用 LLM 从中抽取带图片的结构化问答对。
-2. **数据清洗**：对抽取到的问答对进行过滤和清洗——拆分小题、判断题型、抽取简洁答案、去除低质量内容。
-3. **生成 CoT**：通过 Reject Sampling 生成思维链——LLM 生成回答，与标准答案核对，答错的重新生成。
+
 
 ## 安装
 
