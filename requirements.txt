@@ -2,7 +2,7 @@
 gradio>=4.44.0
 
 # DataFlow core (install from GitHub; includes pdf2vqa extras)
-dataflow[pdf2vqa] @ git+https://github.com/OpenDCAI/DataFlow.git
+open-dataflow[pdf2vqa] @ git+https://github.com/OpenDCAI/DataFlow.git
 
 # Runtime dependencies used by curate_data.py
 json5
