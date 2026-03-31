@@ -1,0 +1,9 @@
+# Gradio UI
+gradio>=4.44.0
+
+# DataFlow core (install from GitHub; includes pdf2vqa extras)
+git+https://github.com/OpenDCAI/DataFlow.git#egg=dataflow[pdf2vqa]
+
+# Runtime dependencies used by curate_data.py
+json5
+pandas
