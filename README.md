@@ -1,5 +1,5 @@
 ---
-title: DataFlow-VQA Data Curation
+title: DataFlow-VQA PDF to VQA Extraction
 emoji: 🔬
 colorFrom: blue
 colorTo: green

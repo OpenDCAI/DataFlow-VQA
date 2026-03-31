@@ -1,78 +1,108 @@
 import os
 import sys
 import re
+import json
 import shutil
 import tempfile
 import traceback
 
 import gradio as gr
 
-# Ensure the repo root is on the Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-def run_curation(
-    input_file,
+def run_vqa_extraction(
+    pdf_files,
+    task_name: str,
     api_url: str,
-    api_key: str,
+    llm_api_key: str,
+    mineru_api_key: str,
     model_name: str,
     max_workers: int,
     progress=gr.Progress(track_tqdm=True),
 ):
-    if input_file is None:
-        return None, "请先上传输入的 JSONL 文件。"
-    if not api_key.strip():
-        return None, "请填写 API Key。"
+    if not pdf_files:
+        return None, "请至少上传一个 PDF 文件。"
+    if not llm_api_key.strip():
+        return None, "请填写 LLM API Key。"
+    if not mineru_api_key.strip():
+        return None, "请填写 MinerU API Key。"
+    if not task_name.strip():
+        task_name = "task1"
 
-    # Inject the key so DataFlow's APILLMServing_request picks it up
-    os.environ["DF_API_KEY"] = api_key.strip()
+    os.environ["DF_API_KEY"] = llm_api_key.strip()
+    os.environ["MINERU_API_KEY"] = mineru_api_key.strip()
 
-    # Use a dedicated temp workspace so parallel runs don't collide
     workspace = tempfile.mkdtemp(prefix="dataflow_vqa_")
     cache_dir = os.path.join(workspace, "cache")
     os.makedirs(cache_dir, exist_ok=True)
 
-    # curate_data.py hardcodes cache_path="./cache", so we work from workspace
     original_cwd = os.getcwd()
     try:
         os.chdir(workspace)
 
-        # Late import after path & cwd are set up
-        from pipelines.curate_data import DataCurationPipeline
+        # Copy uploaded PDFs into workspace and build input JSONL
+        pdf_paths = []
+        for i, f in enumerate(pdf_files):
+            dst = os.path.join(workspace, f"input_{i}.pdf")
+            shutil.copy(f, dst)
+            pdf_paths.append(dst)
+
+        input_jsonl = os.path.join(workspace, "input.jsonl")
+        with open(input_jsonl, "w") as fout:
+            entry = {
+                "input_pdf_paths": pdf_paths if len(pdf_paths) > 1 else pdf_paths[0],
+                "name": task_name.strip(),
+            }
+            fout.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
         progress(0.05, desc="初始化 pipeline…")
 
-        pipeline = DataCurationPipeline(
-            input_file=input_file,
+        from pipelines.vqa_extract_optimized_pipeline import PDF_VQA_extract_optimized_pipeline
+
+        pipeline = PDF_VQA_extract_optimized_pipeline(
+            input_file=input_jsonl,
             api_url=api_url.rstrip("/"),
             model_name=model_name,
             max_workers=int(max_workers),
         )
         pipeline.compile()
 
-        progress(0.15, desc="正在运行 pipeline（可能需要几分钟）…")
+        progress(0.15, desc="调用 MinerU 解析 PDF（可能需要几分钟）…")
         pipeline.forward()
 
         # Locate the highest-numbered step file
         step_files = [
             f for f in os.listdir(cache_dir)
-            if re.match(r"curate_data_step\d+\.jsonl", f)
+            if re.match(r"vqa_step\d+\.jsonl", f)
         ]
         if not step_files:
-            return None, "Pipeline 运行完成，但未找到输出文件。请检查日志。"
+            return None, "Pipeline 运行完成，但未找到输出文件，请检查日志。"
 
         max_step = max(
-            int(re.findall(r"curate_data_step(\d+)\.jsonl", f)[0])
+            int(re.findall(r"vqa_step(\d+)\.jsonl", f)[0])
             for f in step_files
         )
-        output_path = os.path.join(cache_dir, f"curate_data_step{max_step}.jsonl")
+        max_step_file = os.path.join(cache_dir, f"vqa_step{max_step}.jsonl")
 
-        # Copy to a stable temp file so Gradio can serve it
-        result_file = os.path.join(workspace, "curated_vqa.jsonl")
-        shutil.copy(output_path, result_file)
+        # Extract vqa_pair items → raw_vqa.jsonl
+        result_file = os.path.join(workspace, "raw_vqa.jsonl")
+        count = 0
+        with open(max_step_file) as f_in, open(result_file, "w") as f_out:
+            for line in f_in:
+                data = json.loads(line)
+                qa_item = data.get("vqa_pair")
+                if not qa_item:
+                    continue
+                name = data.get("name", task_name)
+                out = {"name": name, **qa_item}
+                if not out.get("solution"):
+                    out["solution"] = out.get("answer", "")
+                f_out.write(json.dumps(out, ensure_ascii=False) + "\n")
+                count += 1
 
         progress(1.0, desc="完成！")
-        return result_file, f"✅ 完成！共执行 {max_step} 步，结果已保存为 curated_vqa.jsonl。"
+        return result_file, f"✅ 完成！共提取 {count} 条 QA 对，已保存为 raw_vqa.jsonl。"
 
     except Exception:
         tb = traceback.format_exc()
@@ -83,82 +113,93 @@ def run_curation(
 
 # ── Gradio UI ──────────────────────────────────────────────────────────────────
 
-with gr.Blocks(
-    title="DataFlow-VQA · 数据清洗 Demo",
-    theme=gr.themes.Soft(),
-) as demo:
+with gr.Blocks(title="DataFlow-VQA · PDF 提取 Demo", theme=gr.themes.Soft()) as demo:
     gr.Markdown(
         """
-# 🔬 DataFlow-VQA — 数据清洗 Pipeline Demo
+# 🔬 DataFlow-VQA — 从 PDF 提取 VQA 数据
 
-将从 PDF 中提取的原始 VQA 数据（`raw_vqa.jsonl`）通过多步 LLM 清洗，输出高质量的 `curated_vqa.jsonl`。
+上传教材或试卷 PDF，自动用 [MinerU](https://mineru.net) 解析版面、再用 LLM 提取结构化 QA 对，输出 `raw_vqa.jsonl`。
 
-**清洗步骤：** 子问题拆分 → 题型分类过滤 → 答案提取 → 填空补全 → 文本清理 → QA 质量过滤
+**流程：** PDF 合并 → MinerU 解析 → LLM 提取 QA → 后处理输出
 
-> 注意：所有 LLM 调用均通过您提供的 API 完成，本 Space 不存储任何数据或密钥。
+> 所有 API 调用均通过您提供的密钥完成，本 Space 不存储任何数据或密钥。
         """
     )
 
     with gr.Row():
         with gr.Column(scale=1):
-            gr.Markdown("### 📥 输入")
-            input_file = gr.File(
-                label="上传输入 JSONL 文件（raw_vqa.jsonl）",
-                file_types=[".jsonl"],
+            gr.Markdown("### 📄 上传 PDF")
+            pdf_files = gr.File(
+                label="上传 PDF（单文件：题答混排；两文件：第1个为题，第2个为答案）",
+                file_types=[".pdf"],
+                file_count="multiple",
             )
-            gr.Markdown("### ⚙️ API 配置")
+            task_name = gr.Textbox(
+                label="任务名称（用于目录命名）",
+                value="task1",
+                placeholder="task1",
+            )
+
+            gr.Markdown("### ⚙️ LLM API 配置")
             api_url = gr.Textbox(
-                label="API Base URL（不含 /chat/completions）",
-                value="https://api.openai.com/v1",
+                label="API Base URL",
+                value="https://generativelanguage.googleapis.com/v1beta/openai/",
                 placeholder="https://api.openai.com/v1",
             )
-            api_key = gr.Textbox(
-                label="API Key",
-                placeholder="sk-...",
+            llm_api_key = gr.Textbox(
+                label="LLM API Key (DF_API_KEY)",
+                placeholder="sk-... / AIzaSy...",
                 type="password",
             )
             model_name = gr.Textbox(
-                label="模型名称",
-                value="gpt-4o-mini",
-                placeholder="gpt-4o-mini / gemini-2.0-flash / deepseek-chat …",
+                label="模型名称（推荐强推理模型）",
+                value="gemini-2.5-pro",
+                placeholder="gemini-2.5-pro / gpt-4o / deepseek-r1",
             )
+
+            gr.Markdown("### 🏗️ MinerU API 配置")
+            mineru_api_key = gr.Textbox(
+                label="MinerU API Key (MINERU_API_KEY)",
+                placeholder="sk2-...",
+                type="password",
+                info="在 https://mineru.net/apiManage/token 申请",
+            )
+
             max_workers = gr.Slider(
-                label="并发 Worker 数量",
-                minimum=1,
-                maximum=50,
-                value=5,
-                step=1,
-                info="HF Spaces 免费版资源有限，建议不超过 10",
+                label="并发 Worker 数",
+                minimum=1, maximum=30, value=5, step=1,
             )
-            run_btn = gr.Button("▶ 开始清洗", variant="primary", size="lg")
+            run_btn = gr.Button("▶ 开始提取", variant="primary", size="lg")
 
         with gr.Column(scale=1):
             gr.Markdown("### 📤 输出")
             status_box = gr.Textbox(
                 label="运行状态",
                 interactive=False,
-                lines=6,
-                placeholder="点击「开始清洗」后，状态信息将显示在这里…",
+                lines=8,
+                placeholder="点击「开始提取」后状态信息显示在这里…",
             )
             output_file = gr.File(
-                label="下载清洗结果（curated_vqa.jsonl）",
+                label="下载提取结果（raw_vqa.jsonl）",
                 interactive=False,
             )
 
     gr.Markdown(
         """
 ---
-**输入格式**：每行一个 JSON 对象，需包含 `question`、`answer`、`solution` 字段。
+**输入说明**
+- 单 PDF：题目和答案在同一文件中交织排布
+- 双 PDF：第一个上传题目 PDF，第二个上传答案 PDF
 
-**支持的 API**：任何 OpenAI 兼容接口，包括 OpenAI、Google Gemini（via proxy）、DeepSeek、vLLM 等。
+**输出格式** `raw_vqa.jsonl`，每行含 `name / question / answer / solution / images` 等字段，可直接送入 Stage 2（数据清洗）。
 
 **项目地址**：[OpenDCAI/DataFlow-VQA](https://github.com/OpenDCAI/DataFlow-VQA)
         """
     )
 
     run_btn.click(
-        fn=run_curation,
-        inputs=[input_file, api_url, api_key, model_name, max_workers],
+        fn=run_vqa_extraction,
+        inputs=[pdf_files, task_name, api_url, llm_api_key, mineru_api_key, model_name, max_workers],
         outputs=[output_file, status_box],
     )
 
