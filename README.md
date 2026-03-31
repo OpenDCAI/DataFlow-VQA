@@ -4,7 +4,7 @@
 
 A pipeline for extracting, curating, and generating chain-of-thought (CoT) data from PDF textbooks and exam papers.
 
-[🤗Dataset](https://huggingface.co/datasets/OpenDCAI/FlipVQA)
+[📄Full Paper with Appendices](./FlipVQA_full.pdf) [🤗Dataset](https://huggingface.co/datasets/OpenDCAI/FlipVQA)
 
 ## Overview
 ![DataFlow-VQA overview](static/overview_2.png)
