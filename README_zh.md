@@ -2,7 +2,7 @@
 
 从 PDF 教材和试卷中提取、清洗、生成思维链（CoT）数据的流水线工具。
 
-[📄完整论文（含附录）](./FlipVQA_full.pdf) [🤗数据集](https://huggingface.co/datasets/OpenDCAI/FlipVQA)
+[📄完整论文（含附录）](./FlipVQA_full.pdf) [🤗数据集](https://huggingface.co/datasets/OpenDCAI/FlipVQA) [🤗FlipVQA-Miner示例](https://huggingface.co/spaces/aaron1141/FlipVQA)
 
 ## 概览
 
