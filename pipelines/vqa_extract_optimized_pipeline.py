@@ -42,7 +42,7 @@ class PDF_VQA_extract_optimized_pipeline(PipelineABC):
         self.vqa_extractor = ChunkedPromptedGenerator(
             llm_serving=self.llm_serving,
             system_prompt = self.vqa_extract_prompt.build_prompt(),
-            max_chunk_len=128000,
+            max_chunk_len=32000,
         )
         self.llm_output_parser = LLMOutputParser(output_dir="./cache", intermediate_dir="intermediate")
         self.qa_merger = QA_Merger(output_dir="./cache", strict_title_match=False)
