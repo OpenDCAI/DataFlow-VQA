@@ -87,7 +87,7 @@ Percentage of boys = (25/40) * 100 = 62.5%, percentage of girls = (15/40) * 100 
         return prompt
         
 @PROMPT_REGISTRY.register()
-class BenchSamplingPrompt(DIYPromptABC):
+class TypeClassifyPrompt(DIYPromptABC):
     def __init__(self, f_str_template: str = "{input_text}", on_missing: str = "raise"):
         self.f_str_template ='''
 [Role]
@@ -115,11 +115,11 @@ it should still be considered a Calculation problem if the majority of the reaso
 
 [Judgment Rules]
 
-1. If the problem explicitly says “prove,” “show that,” “derive,” → classify as Proof problem.
+1. If the problem explicitly says “prove,” “show that,” “derive,” and does not have a short final answer → classify as Proof problem.
 
 2. If it mainly contains explanations, reasoning, or conceptual analysis without detailed calculation → Explanation problem.
 
-3. If the question has blanks, missing terms, or placeholders (e.g., “( )” or “____”) → Fill-in problem.
+3. If the question has blanks, missing terms, or placeholders (e.g., “( )” or “____”), or the question seems **incomplete** → Fill-in problem.
 
 4. If there are multiple formula derivations, substitutions, or numeric results → Calculation problem,
 even if followed by a brief explanatory conclusion.
@@ -198,7 +198,10 @@ class QAFilterPrompt(DIYPromptABC):
         [Important Notice]
         1. You do not need to evaluate the correctness of the answer, only whether it is appropriate and complete in relation to the question.
         2. Short answer with no explanation (calculation, proof, counterexample, ...) is acceptable as long as it directly addresses the question.
-        3. You should be very strict in your evaluation. If any of the criteria above are not fully met, the question-answer pair should be considered unsuitable.
+        3. There might be figures in the question or answer, represented as `![image](image_url)`. However, we do not give you that.
+            You can assume that if the question or answer contains such figure references, they are correctly placed and provide necessary information. 
+        4. Sometimes in a fill-in question, the blanks like "___" may be missing due to OCR errors. In this case, if the question is otherwise clear and complete, you can still judge it as suitable.
+        5. You should be very strict in your evaluation. If any of the criteria above are not fully met, the question-answer pair should be considered unsuitable.
            
         [Output Format]
         Return a JSON object with the following fields:

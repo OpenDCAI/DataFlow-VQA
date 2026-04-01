@@ -58,7 +58,9 @@ class AddMissingBlankOperator(OperatorABC):
                 self.logger.info(f"Prepared {len(llm_inputs)} prompts for LLM generation.")
                 generated_outputs = self.llm_serving.generate_from_input(llm_inputs)
             # write generated outputs back only to the selected rows (preserve other rows as None)
-            dataframe.loc[indices, self.output_key] = generated_outputs
+            for idx, gen_output in zip(indices, generated_outputs):
+                if gen_output != "ORIGINAL":
+                    dataframe.at[idx, output_key] = gen_output
 
         output_file = self.storage.write(dataframe)
         return output_key

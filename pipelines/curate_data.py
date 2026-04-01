@@ -4,7 +4,7 @@ import json
 import json5
 import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from dataflow.operators.core_text import PandasOperator, PromptTemplatedGenerator
+from dataflow.operators.core_text import PandasOperator, FormatStrPromptedGenerator
 from operators.bench_evaluate import BenchDatasetEvaluatorQuestion
 from operators.answer_extractor import AnswerExtractionOperator
 from operators.question_refiner import AddMissingBlankOperator
@@ -18,42 +18,32 @@ from dataflow.operators.reasoning import (
     ReasoningAnswerGroundTruthFilter
 )
 from dataflow.prompts.reasoning.general import GeneralAnswerGeneratorPrompt
-from prompts.bench_sampling import BenchSamplingPrompt, SubQuestionSplitingPrompt, QAFilterPrompt
+from prompts.curate_data import TypeClassifyPrompt, SubQuestionSplitingPrompt, QAFilterPrompt
 from prompts.question_refine import AddMissingBlankPrompt
 from prompts.question_answer_clean import TextCleaningPrompt
-from dataflow.prompts.core_text import StrFormatPrompt
 from dataflow.operators.core_text import GeneralFilter
 import argparse
+import re
+import shutil
 
-class BenchSamplingPipeline(PipelineABC):
-    def __init__(self, first_entry_file_name, cache_path, file_name_prefix, cache_type="json"):
+
+class DataCurationPipeline(PipelineABC):
+    def __init__(self, input_file, api_url, model_name, max_workers=100):
         super().__init__()
         self.storage = FileStorage(
-            first_entry_file_name=first_entry_file_name, ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
-            cache_path=cache_path,
-            file_name_prefix=file_name_prefix,
-            cache_type=cache_type,
+            first_entry_file_name=input_file,
+            cache_path="./cache",
+            file_name_prefix="curate_data",
+            cache_type="jsonl",
         )
 
         self.llm_serving = APILLMServing_request(
-                api_url="http://123.129.219.111:3000/v1/chat/completions",
-                model_name="gpt-5-mini-2025-08-07",
-                max_workers=100,
-        )
-        
-        self.llm_answer_serving = APILLMServing_request(
-                api_url="http://123.129.219.111:3000/v1/chat/completions",
-                model_name="gpt-5-mini",
-                max_workers=100,
-        )
-        self.llm_clean_serving = APILLMServing_request(
-                api_url="http://123.129.219.111:3000/v1/chat/completions",
-                model_name="deepseek-v3.2",
-                max_workers=100,
+                api_url=f"{api_url}/chat/completions",
+                model_name=model_name,
+                max_workers=max_workers,
         )
 
-        # 拆小题
-        self.sub_qa_justify = PromptTemplatedGenerator(
+        self.sub_qa_justify = FormatStrPromptedGenerator(
             llm_serving = self.llm_serving,
             prompt_template = SubQuestionSplitingPrompt()
         )
@@ -61,16 +51,16 @@ class BenchSamplingPipeline(PipelineABC):
             [split_generated_content]
         )
         
-        # 抽取答案
+        # Extract concise answers from solutions
         self.answer_extractor = AnswerExtractionOperator(
             llm_serving=self.llm_serving,
             overwrite=False
         )
         
-        # 判断题型
-        self.type_filter = PromptTemplatedGenerator(
+        # Classify question types
+        self.type_filter = FormatStrPromptedGenerator(
             llm_serving = self.llm_serving,
-            prompt_template = BenchSamplingPrompt()
+            prompt_template = TypeClassifyPrompt()
         )
         self.type_filter_processor = PandasOperator(
             [extract_type_and_reason]
@@ -84,11 +74,8 @@ class BenchSamplingPipeline(PipelineABC):
             prompt_template=AddMissingBlankPrompt()
         )
         
-        # TODO:
-        # answer + 题目过滤：题目或answer有那种根据lemma x.x的不具体描述、答案不完整这种、"Give an example"这种可以给无穷多答案的问题
-        # answer 太长，看有没有必要refined变精简，提升llm as judge的性能。
-        
-        self.qa_filter = PromptTemplatedGenerator(
+        # Filter items with unverifiable or poorly paired QA
+        self.qa_filter = FormatStrPromptedGenerator(
             llm_serving = self.llm_serving,
             prompt_template = QAFilterPrompt()
         )
@@ -98,25 +85,10 @@ class BenchSamplingPipeline(PipelineABC):
         self.qa_filter_executor = GeneralFilter(
             filter_rules=[lambda df: df['filter_result'] == 'true']
         )
-        
-        #llm 回答
-        self.answer_generator = ReasoningAnswerGenerator(
-            llm_serving=self.llm_answer_serving,
-            prompt_template=GeneralAnswerGeneratorPrompt()
-        )
-        
-        ## llm核对
-        self.answer_groundtruth_filter = BenchDatasetEvaluatorQuestion(
-            compare_method="semantic",
-            llm_serving=self.llm_serving,
-            prompt_template=None, # using default prompt
-            eval_result_path="../eval_result_math_test.json",
-            support_subquestions=True
-        )
 
         # question和answer的非内容型过滤
         self.text_cleaner = LLMTextCleanerOperator(
-            llm_serving=self.llm_serving,           # gpt-5-mini 效果不好可以换成 llm_clean_serving
+            llm_serving=self.llm_serving,
             prompt_template=TextCleaningPrompt()
         )
         
@@ -149,7 +121,8 @@ class BenchSamplingPipeline(PipelineABC):
         
         self.answer_extractor.run(
             storage = self.storage.step(),
-            input_key = "solution",
+            input_question_key= "question",
+            input_solution_key = "solution",
             output_key= "answer"
         )
         
@@ -179,21 +152,6 @@ class BenchSamplingPipeline(PipelineABC):
         self.qa_filter_executor.run(
             storage = self.storage.step(),
         )
-                
-        # self.answer_generator.run(
-        #     storage = self.storage.step(),
-        #     input_key = "question", 
-        #     output_key = "llm_answer"
-        # )
-        
-        # # TODO:
-        # # 这个judge很有问题，很不准确，得改，可以考虑sympy?
-        # self.answer_groundtruth_filter.run(
-        #     storage=self.storage.step(), 
-        #     input_test_answer_key="llm_answer",
-        #     input_gt_answer_key="answer",
-        #     input_question_key="question",
-        #   )
 
 
 def split_generated_content(df: pd.DataFrame) -> pd.DataFrame:
@@ -287,36 +245,27 @@ def extract_filter_result_and_reason(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run BenchSamplingPipeline")
-    parser.add_argument("name", nargs="?", default="pde", help="dataset name (default: pde)")
-    parser.add_argument("end", nargs="?", type=int, default=3, help="range end for i (uses range(1, end + 1), default: 3)")
+    parser = argparse.ArgumentParser(description="Data Curation Pipeline")
+    parser.add_argument("--input_file", type=str, required=True, help="Path to the input JSONL file (raw_vqa.jsonl)")
+    parser.add_argument("--api_url", type=str, default="https://api.openai.com/v1", help="Base URL of the OpenAI-compatible API (e.g. https://api.openai.com/v1)")
+    parser.add_argument("--model", type=str, default="gpt-5-mini", help="LLM model name to use for curation")
+    parser.add_argument("--max_workers", type=int, default=100, help="Number of parallel API workers")
     args = parser.parse_args()
-    
-    # Example usage:
-    # python bench_sampling.py pde 3
 
-    name = args.name
-
-    # for i in range(1, args.end + 1):
-    
-    #     first_entry_file_name=f"/data1/VQA_ready_data/{name}_{i}/vqa_filtered_qa_pairs.jsonl"
-    #     cache_path = f"/data1/VQA_ready_data/{name}_{i}"
-    #     file_name_prefix = f"{name}_{i}"
-        
-    #     model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
-    #     model.compile()
-    #     model.forward(resume_step=10)
-    
-    ##############################################################################
-    # 重要：现在改成了只跑一个数字，而不是学科内的多个数字全跑，增加灵活性
-    ##############################################################################
-    
-    end = args.end
-    
-    first_entry_file_name=f"/data1/VQA_ready_data/{name}_{end}/vqa_filtered_qa_pairs.jsonl"
-    cache_path = f"/data1/VQA_ready_data/{name}_{end}"
-    file_name_prefix = f"{name}_{end}"
-    
-    model = BenchSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix)
+    model = DataCurationPipeline(args.input_file, api_url=args.api_url, model_name=args.model, max_workers=args.max_workers)
     model.compile()
-    model.forward(resume_step=7)
+    model.forward()
+    
+    # Find the latest curate_data cache step file
+    cache_files = os.listdir("./cache")
+    step_files = [f for f in cache_files if re.match(r"curate_data_step\d+\.jsonl", f)]
+    step_numbers = [int(re.findall(r"curate_data_step(\d+)\.jsonl", f)[0]) for f in step_files]
+    max_step = max(step_numbers)
+    max_step_file = f"./cache/curate_data_step{max_step}.jsonl"
+    
+    # Copy final step file to output directory as curated_vqa.jsonl
+    # Output is placed alongside input_file so relative image paths remain valid
+    output_dir = os.path.dirname(args.input_file)
+    output_file = os.path.join(output_dir, "curated_vqa.jsonl")
+    shutil.copy(max_step_file, output_file)
+    print(f"Curated data saved to: {output_file}")

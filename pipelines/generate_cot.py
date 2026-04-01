@@ -2,7 +2,7 @@ import os
 import sys
 import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from dataflow.operators.core_text import PandasOperator, PromptTemplatedGenerator
+from dataflow.operators.core_text import PandasOperator
 from operators.bench_evaluate import BenchDatasetEvaluatorQuestion
 from operators.vqa_answer_generator import VQAReasoningAnswerGenerator
 
@@ -15,9 +15,13 @@ from dataflow.operators.reasoning import (
 from dataflow.prompts.reasoning.math import MathAnswerGeneratorPrompt
 from dataflow.operators.core_text import GeneralFilter
 from dataflow import get_logger
+from dataflow.pipeline import PipelineABC
 
 from typing import Iterable
 import re
+import argparse
+import shutil
+
 
 def make_remove_think_fn(input_key, output_key):
     pattern = re.compile(r'<think>.*?</think>', flags=re.DOTALL | re.IGNORECASE)
@@ -38,102 +42,125 @@ def make_remove_think_fn(input_key, output_key):
     
     return fn
 
-class RejectSamplingPipeline():
-    def __init__(self, first_entry_file_name, cache_path, file_name_prefix, eval_result_path, max_retries, cache_type="json"):
+class RejectSamplingPipeline(PipelineABC):
+    def __init__(self, first_entry_file_name, answer_api_url, judge_api_url, answer_model, judge_model,
+                 answer_api_key_env="DF_API_KEY", judge_api_key_env="DF_API_KEY",
+                 max_retries=5, max_workers=100):
+        super().__init__()
         self.storage = FileStorage(
-            first_entry_file_name=first_entry_file_name, ### 现在dataflow还不支持图架构，难以把qa，qas，qs的分类放进来，这个算法在 /data1/hzh/vqa/completeness_filter.py
-            cache_path=cache_path,
-            file_name_prefix=file_name_prefix,
-            cache_type=cache_type,
+            first_entry_file_name=first_entry_file_name,
+            cache_path="./cot_cache",
+            file_name_prefix="reject_sampling",
+            cache_type="jsonl",
         )
-        
+
         self.max_retries = max_retries
         self.logger = get_logger()
 
-        self.llm_answer_serving = LocalVLMServing_vllm(
-            hf_model_name_or_path="/data0/models/Qwen3-VL-32B-Thinking",
-            vllm_temperature=0.5,
-            vllm_tensor_parallel_size=8,
-            vllm_max_tokens=8192,
-            vllm_max_model_len=12800,
-            vllm_gpu_memory_utilization=0.6,
-            vllm_limit_mm_per_prompt=10,
-            vllm_repetition_penalty=1.1,
-            batch_size=128
+        self.llm_answer_serving = APIVLMServing_openai(
+                api_url=answer_api_url,
+                model_name=answer_model,
+                key_name_of_api_key=answer_api_key_env,
+                max_workers=max_workers,
+                timeout=600.0,
+                max_tokens=8192,
+                temperature=0.7,
         )
-        
+
         self.llm_serving = APILLMServing_request(
-                api_url="http://123.129.219.111:3000/v1/chat/completions",
-                model_name="gpt-5-mini",
-                max_workers=100,
+                api_url=f"{judge_api_url}/chat/completions",
+                model_name=judge_model,
+                key_name_of_api_key=judge_api_key_env,
+                max_workers=max_workers,
+                read_timeout=300.0
         )
         
-        # 难度过滤
+        # Difficulty filter (keep items where accuracy <= 1.0)
         self.difficulty_filter = GeneralFilter(
             filter_rules=[lambda df: df['accuracy'] <= 1.0]
         )
         
-        #llm 回答
+        # LLM answer generation
         self.answer_generator = VQAReasoningAnswerGenerator(
             llm_serving=self.llm_answer_serving,
             prompt_template=MathAnswerGeneratorPrompt(),
-            skip_text_only=True,
+            skip_text_only=False,
         )
         
         self.think_cleaner = PandasOperator(process_fn=[ make_remove_think_fn(input_key="generated_cot", output_key="llm_short_answer") ])
         
-        ## llm核对
+        self.noop = PandasOperator(process_fn=[ lambda df: df ])
+        
+        # LLM verification
         self.answer_groundtruth_filter = BenchDatasetEvaluatorQuestion(
             compare_method="semantic",
             llm_serving=self.llm_serving,
             prompt_template=None, # using default prompt
-            eval_result_path=eval_result_path,
+            eval_result_path="./cot_cache/eval_results.jsonl",
             support_subquestions=True,
             skip_true=True
         )
         
     def forward(self):
-                
-        # self.difficulty_filter.run(storage = self.storage.step())
-        
+        self.noop.run(storage = self.storage.step(), output_key="answer_match_result") # for pipeline compilation, do nothing
         for i in range(self.max_retries):
-        
+
             input_skip_key="answer_match_result" if i > 0 else None
-            
-            # llm回答（跳过已经做对的题）
+
+            # Generate answers (skip items already answered correctly)
             self.answer_generator.run(
                 storage = self.storage.step(),
                 input_key = "question", 
                 output_key = "generated_cot",
-                input_caption_key="captions",
                 input_skip_key=input_skip_key,
+                input_image_basedir_key="image_basedir",
             )
-            
 
-            # 有可能会有空的文件，所以要try
-            try:
-                self.think_cleaner.run(storage = self.storage.step())
-                # TODO:
-                # 这个judge很有问题，很不准确，得改，可以考虑sympy?
-                self.answer_groundtruth_filter.run(
-                    storage=self.storage.step(), 
-                    input_test_answer_key="llm_short_answer",
-                    input_gt_answer_key="answer",
-                    input_question_key="question",
-                )
-                self.storage.operator_step += 1
-                correct_num = self.storage.read(output_type="dataframe")["answer_match_result"].sum()
-                self.logger.info(f"After reject sampling round {i+1}, correct_num: {correct_num}")
-                self.storage.operator_step -= 1
-            except Exception as e:
-                self.logger.warning(f"Eval failed at reject sampling round {i+1}: {e}")
+            self.think_cleaner.run(storage = self.storage.step(), output_key="llm_short_answer")
+
+            self.answer_groundtruth_filter.run(
+                storage=self.storage.step(), 
+                input_test_answer_key="llm_short_answer",
+                input_gt_answer_key="answer",
+                input_question_key="question",
+            )
 
 if __name__ == "__main__":
-    first_entry_file_name=f"/data1/djw/VQA_1209/caption_cache/gpt-5-mini_step3.json"
-    cache_path = f"./cot_cache/vqa_1209_top1000"
-    file_name_prefix = f"qwen3_vl_32b_reject_sampling"
-    eval_result_path = f"./cot_cache/all_vqa_only/eval_results.jsonl"
-    max_retries = 3
-    
-    model = RejectSamplingPipeline(first_entry_file_name, cache_path, file_name_prefix, eval_result_path, max_retries)
+    parser = argparse.ArgumentParser(description="CoT Generation Pipeline with Reject Sampling")
+    parser.add_argument("--input_file", type=str, required=True, help="Path to the input JSONL file (curated_vqa.jsonl)")
+    parser.add_argument("--max_retries", type=int, default=5, help="Maximum number of reject sampling rounds")
+    parser.add_argument("--answer_api_url", type=str, default="https://api.xxx.com/v1", help="Url where you serve your qwen model (e.g. via vllm)")
+    parser.add_argument("--judge_api_url", type=str, default="https://api.openai.com/v1", help="Base URL of the OpenAI-compatible API for answer verification (e.g. https://api.openai.com/v1)")
+    parser.add_argument("--answer_model", type=str, default="qwen3-vl-235b-thinking", help="Model to use for answer generation")
+    parser.add_argument("--judge_model", type=str, default="gpt-5-mini", help="Model to use for answer verification")
+    parser.add_argument("--answer_api_key_env", type=str, default="DF_API_KEY", help="Environment variable name holding the API key for the answer model")
+    parser.add_argument("--judge_api_key_env", type=str, default="DF_API_KEY", help="Environment variable name holding the API key for the judge model")
+    parser.add_argument("--max_workers", type=int, default=100, help="Number of parallel API workers")
+    args = parser.parse_args()
+
+    model = RejectSamplingPipeline(
+        args.input_file,
+        answer_api_url=args.answer_api_url,
+        judge_api_url=args.judge_api_url,
+        answer_model=args.answer_model,
+        judge_model=args.judge_model,
+        answer_api_key_env=args.answer_api_key_env,
+        judge_api_key_env=args.judge_api_key_env,
+        max_retries=args.max_retries,
+        max_workers=args.max_workers,
+    )
+    model.compile()
     model.forward()
+
+    # Find the latest reject_sampling cache step file
+    cache_files = os.listdir("./cot_cache")
+    step_files = [f for f in cache_files if re.match(r"reject_sampling_step\d+\.jsonl", f)]
+    step_numbers = [int(re.findall(r"reject_sampling_step(\d+)\.jsonl", f)[0]) for f in step_files]
+    max_step = max(step_numbers)
+    max_step_file = f"./cot_cache/reject_sampling_step{max_step}.jsonl"
+
+    # Copy output alongside input_file so relative image paths remain valid
+    output_dir = os.path.dirname(args.input_file)
+    output_file = os.path.join(output_dir, "curated_vqa_with_cot.jsonl")
+    shutil.copy(max_step_file, output_file)
+    print(f"Curated data with cot saved to: {output_file}")
