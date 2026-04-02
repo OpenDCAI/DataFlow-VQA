@@ -30,6 +30,8 @@ class PDF_VQA_extract_optimized_pipeline(PipelineABC):
             key_name_of_api_key="DF_API_KEY",
             model_name=model_name,
             max_workers=max_workers,
+            read_timeout=600.0,
+            max_retries=2
         )
         
         self.vqa_extract_prompt = QAExtractPrompt()
