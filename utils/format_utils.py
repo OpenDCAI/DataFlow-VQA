@@ -99,6 +99,7 @@ def merge_qa_pair(vqa_jsonl, output_jsonl, strict_title_match=False):
                     # 如果题号增加，章节标题却发生变化，说明可能错误提取了子标题。因此继续使用之前的章节标题。
                     data["chapter_title"] = chapter_title
             label = data["label"]
+            data["original_chapter_title"] = data["chapter_title"]
             data["chapter_title"] = refine_title(data["chapter_title"], strict_title_match)
             # 动态更新，防止错误的重复label覆盖掉之前的solution或answer
             if data['label'] > 0:
